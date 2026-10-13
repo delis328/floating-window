@@ -1,0 +1,17 @@
+## 构建输出
+[Bb]in/
+[Oo]bj/
+
+## 发布产物
+publish/
+publish-*/
+*.rar
+
+## Visual Studio / Rider
+.vs/
+.idea/
+*.user
+*.suo
+
+## 本地配置
+appsettings.local.json
