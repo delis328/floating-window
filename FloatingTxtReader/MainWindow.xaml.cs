@@ -257,22 +257,7 @@ public partial class MainWindow : Window
         return -1;
     }
 
-    private void GoToNextChapter()
-    {
-        GoToChapterOffset(1);
-    }
-
-    private int FindPreviousChapterLine()
-    {
-        for (var index = _chapterLines.Count - 1; index >= 0; index--)
-        {
-            if (_chapterLines[index] < _state.CurrentLine)
-            {
-                return _chapterLines[index];
-            }
-        }
-        return -1;
-    }
+    private int FindPreviousChapterLine() => FindPreviousChapterLineBefore(_state.CurrentLine);
 
     private void GoToChapterOffset(int chapterOffset)
     {
@@ -324,7 +309,7 @@ public partial class MainWindow : Window
     {
         if (_lines.Count == 0)
         {
-            ReaderText.Text = "Open a TXT file from the tray menu";
+            ReaderText.Text = "\u8BF7\u4ECE\u6258\u76D8\u83DC\u5355\u9009\u62E9 TXT \u6587\u4EF6";
             return;
         }
 
