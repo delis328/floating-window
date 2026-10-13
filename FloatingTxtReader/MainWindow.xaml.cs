@@ -361,6 +361,13 @@ public partial class MainWindow : Window
             widthPerCharacter * characterCount + Surface.Padding.Left + Surface.Padding.Right +
             Surface.BorderThickness.Left + Surface.BorderThickness.Right + 2);
         Width = Math.Max(80, requiredWidth);
+
+        var handleHeight = DragHandleHitArea.Visibility == Visibility.Visible ? DragHandleHitArea.Height : 0;
+        var requiredHeight = Math.Ceiling(
+            handleHeight + ReaderText.LineHeight * Math.Max(1, _state.VisibleLines) +
+            Surface.Padding.Top + Surface.Padding.Bottom +
+            Surface.BorderThickness.Top + Surface.BorderThickness.Bottom + 2);
+        Height = Math.Max(MinHeight, requiredHeight);
     }
 
     private void GoToLine(int lineIndex)
@@ -376,6 +383,7 @@ public partial class MainWindow : Window
         Opacity = 1;
         SetReaderVisible(!_state.IsLocked || IsMouseOver);
         UpdateLockVisual();
+        FitWindowToCharacters();
         SaveState();
     }
 
