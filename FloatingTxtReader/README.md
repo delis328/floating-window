@@ -15,4 +15,4 @@ The framework-dependent publication requires the .NET 8 Desktop Runtime on the t
 
 ## Use
 
-Right-click the tray icon to open a TXT file, jump to the next detected chapter, lock or unlock the floating window, and open reading settings.
+Right-click the tray icon to open a TXT file, jump to the next detected chapter, open the chapter list to filter and jump to any detected chapter, lock or unlock the floating window, and open reading settings.

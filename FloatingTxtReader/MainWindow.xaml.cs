@@ -31,9 +31,10 @@ public partial class MainWindow : Window
     private readonly DispatcherTimer _scrollTimer;
     private readonly Forms.NotifyIcon _trayIcon;
     private List<string> _lines = [];
-    private List<int> _chapterLines = [];
+    private List<(int Line, string Title)> _chapters = [];
     private bool _isExiting;
     private SettingsWindow? _settingsWindow;
+    private ChapterListWindow? _chapterListWindow;
     private int _wheelRemainder;
     private int _pendingScrollLines;
     private bool _keepTrayMenuOpen;
@@ -145,6 +146,10 @@ public partial class MainWindow : Window
             Size = new System.Drawing.Size(240, 30),
             Padding = new Forms.Padding(0),
         });
+        menu.Items.Add(new Forms.ToolStripMenuItem("\u7AE0\u8282\u5217\u8868...", null, (_, _) => ShowChapterList())
+        {
+            Enabled = _chapters.Count > 0,
+        });
         menu.Items.Add(_state.IsLocked ? "\u89E3\u9501\u7A97\u53E3" : "\u9501\u5B9A\u7A97\u53E3", null, (_, _) => ToggleLock());
         menu.Items.Add("\u590D\u4F4D\u4F4D\u7F6E", null, (_, _) => ResetWindowPosition());
         menu.Items.Add(new Forms.ToolStripSeparator());
@@ -174,6 +179,8 @@ public partial class MainWindow : Window
             var content = ReadTextFile(filePath);
             _lines = WrapLines(content, Math.Max(1, _state.CharactersPerLine));
             BuildChapterIndex();
+            _chapterListWindow?.Close();
+            _chapterListWindow = null;
             if (_state.CurrentLine == 0)
             {
                 _state.CurrentLine = FindFirstContentLine();
@@ -183,7 +190,7 @@ public partial class MainWindow : Window
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or DecoderFallbackException)
         {
             _lines = [];
-            _chapterLines = [];
+            _chapters = [];
             ReaderText.Text = $"\u65E0\u6CD5\u8BFB\u53D6\u6587\u672C\u6587\u4EF6: {ex.Message}";
         }
     }
@@ -234,24 +241,24 @@ public partial class MainWindow : Window
 
     private void BuildChapterIndex()
     {
-        _chapterLines = [];
+        _chapters = [];
         for (var index = 0; index < _lines.Count; index++)
         {
             var candidate = _lines[index].TrimStart('\uFEFF').TrimStart();
             if (ChapterHeadingPattern.IsMatch(candidate))
             {
-                _chapterLines.Add(index);
+                _chapters.Add((index, candidate.Trim()));
             }
         }
     }
 
     private int FindNextChapterLine()
     {
-        foreach (var chapterLine in _chapterLines)
+        foreach (var (line, _) in _chapters)
         {
-            if (chapterLine > _state.CurrentLine)
+            if (line > _state.CurrentLine)
             {
-                return chapterLine;
+                return line;
             }
         }
         return -1;
@@ -278,7 +285,7 @@ public partial class MainWindow : Window
         {
             for (var index = 0; index < chapterOffset; index++)
             {
-                var nextChapterLine = _chapterLines.FirstOrDefault(line => line > targetLine, -1);
+                var nextChapterLine = _chapters.FirstOrDefault(chapter => chapter.Line > targetLine, (Line: -1, Title: string.Empty)).Line;
                 if (nextChapterLine < 0)
                 {
                     break;
@@ -295,11 +302,11 @@ public partial class MainWindow : Window
 
     private int FindPreviousChapterLineBefore(int line)
     {
-        for (var index = _chapterLines.Count - 1; index >= 0; index--)
+        for (var index = _chapters.Count - 1; index >= 0; index--)
         {
-            if (_chapterLines[index] < line)
+            if (_chapters[index].Line < line)
             {
-                return _chapterLines[index];
+                return _chapters[index].Line;
             }
         }
         return -1;
@@ -391,6 +398,32 @@ public partial class MainWindow : Window
         _settingsWindow = new SettingsWindow(_state, ApplySettings);
         _settingsWindow.Owner = this;
         _settingsWindow.Show();
+    }
+
+    private void ShowChapterList()
+    {
+        if (_chapters.Count == 0)
+        {
+            return;
+        }
+
+        if (_chapterListWindow is { IsVisible: true })
+        {
+            _chapterListWindow.Activate();
+            return;
+        }
+
+        _chapterListWindow = new ChapterListWindow(_chapters, _state.CurrentLine, GoToChapterLine);
+        _chapterListWindow.Owner = this;
+        _chapterListWindow.Show();
+    }
+
+    private void GoToChapterLine(int line)
+    {
+        if (line >= 0 && line < _lines.Count)
+        {
+            GoToLine(line);
+        }
     }
 
     private string? ApplySettings(AppState updatedState)
