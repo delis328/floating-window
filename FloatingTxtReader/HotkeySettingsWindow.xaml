@@ -1,0 +1,36 @@
+<Window x:Class="FloatingTxtReader.HotkeySettingsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="快捷键设置" Width="490" SizeToContent="Height"
+        ResizeMode="NoResize" WindowStartupLocation="CenterScreen">
+    <Grid Margin="18">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+        <TextBlock Grid.Row="0" Margin="0,0,0,14" TextWrapping="Wrap"
+                   Text="点击输入框后按下快捷键；留空表示不启用。&#x0A;快进行：按设定速度匀速逐行前进，松开立即停止。&#x0A;设置期间暂停全局快捷键，关闭此窗口后恢复。" />
+        <StackPanel x:Name="BindingsPanel" Grid.Row="1" />
+        <Grid Grid.Row="2" Margin="0,0,0,10">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="145" />
+                <ColumnDefinition Width="80" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+            <TextBlock Text="快进速度（行 / 秒）" VerticalAlignment="Center" />
+            <TextBox x:Name="FastForwardSpeedBox" Grid.Column="1" MinHeight="28"
+                     VerticalContentAlignment="Center" />
+            <TextBlock x:Name="SpeedRangeText" Grid.Column="2" Margin="8,0,0,0"
+                       VerticalAlignment="Center" />
+        </Grid>
+        <TextBlock x:Name="ErrorText" Grid.Row="3" Margin="0,6,0,0"
+                   Foreground="Firebrick" TextWrapping="Wrap" />
+        <StackPanel Grid.Row="4" Orientation="Horizontal" HorizontalAlignment="Right">
+            <Button Width="80" Margin="0,12,8,0" IsCancel="True" Click="Cancel_Click">取消</Button>
+            <Button Width="80" Margin="0,12,0,0" Click="Apply_Click">应用</Button>
+        </StackPanel>
+    </Grid>
+</Window>

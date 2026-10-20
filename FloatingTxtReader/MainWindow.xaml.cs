@@ -1,4 +1,5 @@
 using System.IO;
+using System.Diagnostics;
 using System.Text;
 using System.Globalization;
 using System.Runtime.InteropServices;
@@ -17,11 +18,7 @@ namespace FloatingTxtReader;
 public partial class MainWindow : Window
 {
     private const int WheelDeltaPerLine = 120;
-    private const int CloseHotkeyId = 1;
     private const int WmHotkey = 0x0312;
-    private const uint ModAlt = 0x0001;
-    private const uint ModControl = 0x0002;
-    private const uint ModShift = 0x0004;
     private const uint ModNoRepeat = 0x4000;
     private static readonly Regex ChapterHeadingPattern = new(
         @"^\s*(?:(?:\u7B2C\s*)?(?:[0-9\uFF10-\uFF19]+|[\u96F6\u3007\u4E00\u4E8C\u4E09\u56DB\u4E94\u516D\u4E03\u516B\u4E5D\u5341\u767E\u5343\u4E07\u4EBF\u4E24]+)\s*\u5377\s*)?(?:\u7B2C\s*)?(?:[0-9\uFF10-\uFF19]+|[\u96F6\u3007\u4E00\u4E8C\u4E09\u56DB\u4E94\u516D\u4E03\u516B\u4E5D\u5341\u767E\u5343\u4E07\u4EBF\u4E24]+)\s*(?:\u7AE0|\u8BDD)(?=\s|$|[\uFF1A:\u3001.\uFF0E])",
@@ -30,25 +27,30 @@ public partial class MainWindow : Window
     private readonly DispatcherTimer _saveTimer;
     private readonly DispatcherTimer _scrollTimer;
     private readonly Forms.NotifyIcon _trayIcon;
+    private readonly DispatcherTimer _fastForwardTimer;
+    private readonly Stopwatch _fastForwardWatch = new();
+    private readonly HashSet<int> _registeredHotkeys = [];
+    private TimeSpan _lastFastForwardStep;
     private List<string> _lines = [];
     private List<(int Line, string Title)> _chapters = [];
     private bool _isExiting;
     private SettingsWindow? _settingsWindow;
+    private HotkeySettingsWindow? _hotkeySettingsWindow;
     private ChapterListWindow? _chapterListWindow;
     private int _wheelRemainder;
     private int _pendingScrollLines;
     private bool _keepTrayMenuOpen;
     private IntPtr _windowHandle;
-    private bool _closeHotkeyRegistered;
 
     public MainWindow(AppState state)
     {
         _state = state;
         _state.VisibleLines = Math.Clamp(_state.VisibleLines, 1, 30);
         _state.CharactersPerLine = Math.Clamp(_state.CharactersPerLine, 1, 500);
+        _state.FastForwardLinesPerSecond = Math.Clamp(_state.FastForwardLinesPerSecond, 1, AppState.MaxFastForwardLinesPerSecond);
         _state.WindowWidth = Math.Max(_state.WindowWidth, 80);
         _state.WindowHeight = Math.Max(_state.WindowHeight, 56);
-        if (!TryParseCloseHotkey(_state.CloseHotkey, out _, out _))
+        if (!string.IsNullOrWhiteSpace(_state.CloseHotkey) && !Hotkeys.TryParse(_state.CloseHotkey, out _, out _))
         {
             _state.CloseHotkey = AppState.DefaultCloseHotkey;
         }
@@ -68,6 +70,8 @@ public partial class MainWindow : Window
         };
         _scrollTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(16) };
         _scrollTimer.Tick += (_, _) => FlushPendingScroll();
+        _fastForwardTimer = new DispatcherTimer(DispatcherPriority.Input) { Interval = TimeSpan.FromMilliseconds(16) };
+        _fastForwardTimer.Tick += (_, _) => FastForwardTick(IsFastForwardKeyHeld());
         _trayIcon = CreateTrayIcon();
 
         ApplyAppearance();
@@ -122,12 +126,14 @@ public partial class MainWindow : Window
 
     private void BuildTrayMenu(Forms.ContextMenuStrip menu)
     {
+        StopFastForward();
         menu.Items.Clear();
         var currentFileLabel = string.IsNullOrWhiteSpace(_state.FilePath)
             ? "\u5F53\u524D TXT\uFF1A\u672A\u7ED1\u5B9A"
             : $"\u5F53\u524D TXT\uFF1A{Path.GetFileName(_state.FilePath)}";
         menu.Items.Add(currentFileLabel, null, (_, _) => ChooseFile());
         menu.Items.Add("\u9605\u8BFB\u8BBE\u7F6E...", null, (_, _) => ShowSettings());
+        menu.Items.Add("快捷键设置...", null, (_, _) => ShowHotkeySettings());
         var chapterJumpControl = new ChapterJumpControl();
         chapterJumpControl.SetAvailable(FindPreviousChapterLine() >= 0, FindNextChapterLine() >= 0);
         chapterJumpControl.MouseDown += (_, _) => _keepTrayMenuOpen = true;
@@ -397,6 +403,7 @@ public partial class MainWindow : Window
 
     private void ShowSettings()
     {
+        StopFastForward();
         if (_settingsWindow is { IsVisible: true })
         {
             _settingsWindow.Activate();
@@ -410,6 +417,7 @@ public partial class MainWindow : Window
 
     private void ShowChapterList()
     {
+        StopFastForward();
         if (_chapters.Count == 0)
         {
             return;
@@ -436,12 +444,6 @@ public partial class MainWindow : Window
 
     private string? ApplySettings(AppState updatedState)
     {
-        if (!string.Equals(_state.CloseHotkey, updatedState.CloseHotkey, StringComparison.Ordinal) &&
-            !TryUpdateCloseHotkey(updatedState.CloseHotkey, out var hotkeyError))
-        {
-            return hotkeyError;
-        }
-
         _state.VisibleLines = updatedState.VisibleLines;
         _state.CharactersPerLine = updatedState.CharactersPerLine;
         _state.FontFamily = updatedState.FontFamily;
@@ -461,141 +463,178 @@ public partial class MainWindow : Window
         return null;
     }
 
+    private void ShowHotkeySettings()
+    {
+        if (_hotkeySettingsWindow is { IsVisible: true })
+        {
+            _hotkeySettingsWindow.Activate();
+            return;
+        }
+
+        StopFastForward();
+        UnregisterHotkeys();
+        _hotkeySettingsWindow = new HotkeySettingsWindow(_state, ApplyHotkeys);
+        _hotkeySettingsWindow.Owner = this;
+        _hotkeySettingsWindow.Closed += (_, _) =>
+        {
+            _hotkeySettingsWindow = null;
+            if (!_isExiting)
+            {
+                UnregisterHotkeys();
+                RegisterHotkeys();
+            }
+        };
+        _hotkeySettingsWindow.Show();
+    }
+
+    private string? ApplyHotkeys(AppState updatedState)
+    {
+        var error = Hotkeys.Validate(updatedState);
+        if (error is not null) return error;
+        StopFastForward();
+        UnregisterHotkeys();
+        foreach (var binding in Hotkeys.GetBindings(updatedState))
+        {
+            if (string.IsNullOrWhiteSpace(binding.Shortcut)) continue;
+            if (!TryRegisterHotkey(binding))
+            {
+                UnregisterHotkeys();
+                return $"{binding.Label}：{binding.Shortcut} 已被其他程序占用或被系统保留，请更换。";
+            }
+        }
+        foreach (var binding in Hotkeys.GetBindings(updatedState))
+        {
+            Hotkeys.SetShortcut(_state, binding.Id, binding.Shortcut);
+        }
+        _state.FastForwardLinesPerSecond = updatedState.FastForwardLinesPerSecond;
+        SaveState();
+        return null;
+    }
+
     private void Window_SourceInitialized(object? sender, EventArgs e)
     {
         _windowHandle = new WindowInteropHelper(this).Handle;
         HwndSource.FromHwnd(_windowHandle)?.AddHook(WindowMessageHook);
-        RegisterCloseHotkey();
+        RegisterHotkeys();
+    }
+
+    private void RegisterHotkeys()
+    {
+        var unavailable = new List<string>();
+        foreach (var binding in Hotkeys.GetBindings(_state))
+        {
+            if (!string.IsNullOrWhiteSpace(binding.Shortcut) && !TryRegisterHotkey(binding))
+                unavailable.Add($"{binding.Label}：{binding.Shortcut}");
+        }
+        if (unavailable.Count > 0)
+        {
+            Dispatcher.BeginInvoke(new Action(() => System.Windows.MessageBox.Show(
+                "以下快捷键无效、重复或被占用，未能启用：\n" + string.Join("\n", unavailable) +
+                "\n请从托盘菜单打开“快捷键设置”修改。", "快捷键提示", MessageBoxButton.OK, MessageBoxImage.Warning)));
+        }
+    }
+
+    private bool TryRegisterHotkey(HotkeyBinding binding)
+    {
+        if (_registeredHotkeys.Contains(binding.Id)) return true;
+        if (_windowHandle == IntPtr.Zero || !Hotkeys.TryParse(binding.Shortcut, out var modifiers, out var key) ||
+            !RegisterHotKey(_windowHandle, binding.Id, modifiers | ModNoRepeat, key)) return false;
+        _registeredHotkeys.Add(binding.Id);
+        return true;
+    }
+
+    private void UnregisterHotkeys()
+    {
+        foreach (var id in _registeredHotkeys) UnregisterHotKey(_windowHandle, id);
+        _registeredHotkeys.Clear();
     }
 
     private IntPtr WindowMessageHook(IntPtr hwnd, int message, IntPtr wParam, IntPtr lParam, ref bool handled)
     {
-        if (message == WmHotkey && wParam.ToInt64() == CloseHotkeyId)
+        var id = (int)wParam.ToInt64();
+        if (message != WmHotkey || !_registeredHotkeys.Contains(id)) return IntPtr.Zero;
+        handled = true;
+        if (_hotkeySettingsWindow is { IsVisible: true }) return IntPtr.Zero;
+        if (id != Hotkeys.FastForward) StopFastForward();
+        switch (id)
         {
-            handled = true;
-            ExitApplication();
+            case Hotkeys.Close: ExitApplication(); break;
+            case Hotkeys.Hide:
+                if (IsVisible) Hide();
+                else Show();
+                break;
+            case Hotkeys.PreviousLine when CanNavigateWithHotkey(): MoveByLine(-1); break;
+            case Hotkeys.NextLine when CanNavigateWithHotkey(): MoveByLine(1); break;
+            case Hotkeys.PreviousChapter when CanNavigateWithHotkey(): GoToChapterOffset(-1); break;
+            case Hotkeys.NextChapter when CanNavigateWithHotkey(): GoToChapterOffset(1); break;
+            case Hotkeys.FastForward when CanNavigateWithHotkey(): StartFastForward(); break;
         }
-
         return IntPtr.Zero;
     }
 
-    private bool TryUpdateCloseHotkey(string closeHotkey, out string? error)
+    private bool CanNavigateWithHotkey() => IsVisible && _lines.Count > 0 &&
+        _settingsWindow is not { IsVisible: true } && _chapterListWindow is not { IsVisible: true };
+
+    private bool MoveByLine(int offset)
     {
-        error = null;
-        if (!TryParseCloseHotkey(closeHotkey, out _, out _))
-        {
-            error = "\u5168\u5C40\u5FEB\u6377\u952E\u683C\u5F0F\u65E0\u6548\u3002";
-            return false;
-        }
-
-        var previousCloseHotkey = _state.CloseHotkey;
-        UnregisterCloseHotkey();
-        _state.CloseHotkey = closeHotkey;
-        if (RegisterCloseHotkey())
-        {
-            return true;
-        }
-
-        _state.CloseHotkey = previousCloseHotkey;
-        RegisterCloseHotkey();
-        error = "\u8BE5\u5168\u5C40\u5FEB\u6377\u952E\u5DF2\u88AB\u5176\u4ED6\u7A0B\u5E8F\u5360\u7528\u3002";
-        return false;
+        var maxLine = Math.Max(0, _lines.Count - Math.Max(1, _state.VisibleLines));
+        var line = Math.Clamp(_state.CurrentLine + offset, 0, maxLine);
+        if (line == _state.CurrentLine) return false;
+        GoToLine(line);
+        return true;
     }
 
-    private bool RegisterCloseHotkey()
+    private void StartFastForward()
     {
-        if (_closeHotkeyRegistered)
-        {
-            return true;
-        }
-
-        if (_windowHandle == IntPtr.Zero ||
-            !TryParseCloseHotkey(_state.CloseHotkey, out var modifiers, out var virtualKey))
-        {
-            return false;
-        }
-
-        _closeHotkeyRegistered = RegisterHotKey(_windowHandle, CloseHotkeyId, modifiers | ModNoRepeat, virtualKey);
-        return _closeHotkeyRegistered;
+        StopFastForward();
+        if (!IsFastForwardKeyHeld() || !MoveByLine(1)) return;
+        _lastFastForwardStep = TimeSpan.Zero;
+        _fastForwardWatch.Restart();
+        _fastForwardTimer.Start();
     }
 
-    private void UnregisterCloseHotkey()
+    private void FastForwardTick(bool isKeyHeld)
     {
-        if (_closeHotkeyRegistered)
+        if (!CanNavigateWithHotkey() || !isKeyHeld)
         {
-            UnregisterHotKey(_windowHandle, CloseHotkeyId);
-            _closeHotkeyRegistered = false;
+            StopFastForward();
+            return;
         }
+        var elapsed = _fastForwardWatch.Elapsed;
+        var interval = Hotkeys.FastForwardInterval(_state.FastForwardLinesPerSecond);
+        if (elapsed - _lastFastForwardStep < interval) return;
+        // Keep fixed time slots; skip missed slots rather than burst through overdue lines.
+        _lastFastForwardStep = TimeSpan.FromTicks(elapsed.Ticks - elapsed.Ticks % interval.Ticks);
+        if (!MoveByLine(1)) StopFastForward();
     }
 
-    private static bool TryParseCloseHotkey(string? value, out uint modifiers, out uint virtualKey)
+    private bool IsFastForwardKeyHeld()
     {
-        modifiers = 0;
-        virtualKey = 0;
-        var parts = value?.Split('+', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
-        if (parts is not { Length: > 0 })
-        {
-            return false;
-        }
-
-        Key? key = null;
-        foreach (var part in parts)
-        {
-            switch (part.ToUpperInvariant())
-            {
-                case "CTRL":
-                    modifiers |= ModControl;
-                    break;
-                case "ALT":
-                    modifiers |= ModAlt;
-                    break;
-                case "SHIFT":
-                    modifiers |= ModShift;
-                    break;
-                default:
-                    if (key is not null || !TryParseHotkeyKey(part, out var parsedKey))
-                    {
-                        return false;
-                    }
-                    key = parsedKey;
-                    break;
-            }
-        }
-
-        if (key is null || IsModifierKey(key.Value))
-        {
-            return false;
-        }
-
-        virtualKey = (uint)KeyInterop.VirtualKeyFromKey(key.Value);
-        return virtualKey != 0;
+        if (!Hotkeys.TryParse(_state.FastForwardHotkey, out var modifiers, out var key) || !IsKeyDown((int)key)) return false;
+        uint heldModifiers = 0;
+        if (IsKeyDown(0x12)) heldModifiers |= 1;
+        if (IsKeyDown(0x11)) heldModifiers |= 2;
+        if (IsKeyDown(0x10)) heldModifiers |= 4;
+        if (IsKeyDown(0x5B) || IsKeyDown(0x5C)) heldModifiers |= 8;
+        return heldModifiers == modifiers;
     }
 
-    private static bool TryParseHotkeyKey(string value, out Key key)
+    private static bool IsKeyDown(int key) => (GetAsyncKeyState(key) & 0x8000) != 0;
+
+    private void StopFastForward()
     {
-        if (string.Equals(value, "\u6CE2\u6D6A\u952E", StringComparison.Ordinal))
-        {
-            key = Key.Oem3;
-            return true;
-        }
-
-        if (value.Length == 1 && value[0] is >= '0' and <= '9')
-        {
-            key = (Key)((int)Key.D0 + value[0] - '0');
-            return true;
-        }
-
-        return Enum.TryParse(value, true, out key);
+        _fastForwardTimer.Stop();
+        _fastForwardWatch.Reset();
     }
-
-    private static bool IsModifierKey(Key key) => key is
-        Key.LeftCtrl or Key.RightCtrl or Key.LeftAlt or Key.RightAlt or Key.LeftShift or Key.RightShift;
 
     [DllImport("user32.dll", SetLastError = true)]
     private static extern bool RegisterHotKey(IntPtr hWnd, int id, uint modifiers, uint virtualKey);
 
     [DllImport("user32.dll", SetLastError = true)]
     private static extern bool UnregisterHotKey(IntPtr hWnd, int id);
+
+    [DllImport("user32.dll")]
+    private static extern short GetAsyncKeyState(int virtualKey);
 
     private void ApplyAppearance()
     {
@@ -742,6 +781,7 @@ public partial class MainWindow : Window
         }
 
         e.Cancel = true;
+        StopFastForward();
         Hide();
     }
 
@@ -750,7 +790,8 @@ public partial class MainWindow : Window
         _isExiting = true;
         _saveTimer.Stop();
         SettingsStore.Save(_state);
-        UnregisterCloseHotkey();
+        StopFastForward();
+        UnregisterHotkeys();
         _trayIcon.Visible = false;
         _trayIcon.Dispose();
         System.Windows.Application.Current.Shutdown();

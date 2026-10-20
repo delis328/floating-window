@@ -10,5 +10,6 @@
   </PropertyGroup>
   <ItemGroup>
     <Resource Include="Assets\FloatingTxtReader.ico" />
+    <InternalsVisibleTo Include="FloatingTxtReader.Tests" />
   </ItemGroup>
 </Project>

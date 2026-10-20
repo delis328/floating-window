@@ -1,7 +1,6 @@
 using System.Globalization;
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Input;
 
 namespace FloatingTxtReader;
 
@@ -23,7 +22,6 @@ public partial class SettingsWindow : Window
             ForegroundColor = state.ForegroundColor,
             TextOpacity = state.TextOpacity,
             LineHeightMultiplier = state.LineHeightMultiplier,
-            CloseHotkey = state.CloseHotkey,
         };
         _apply = apply;
         InitializeComponent();
@@ -37,7 +35,6 @@ public partial class SettingsWindow : Window
         ColorBox.SelectedIndex = string.Equals(_state.ForegroundColor, "#000000", StringComparison.OrdinalIgnoreCase) ? 1 : 0;
         TextOpacityBox.Text = _state.TextOpacity.ToString(CultureInfo.InvariantCulture);
         LineHeightBox.Text = _state.LineHeightMultiplier.ToString(CultureInfo.InvariantCulture);
-        HotkeyBox.Text = _state.CloseHotkey;
     }
 
     private void Apply_Click(object sender, RoutedEventArgs e)
@@ -62,7 +59,6 @@ public partial class SettingsWindow : Window
         _state.ForegroundColor = ColorBox.SelectedIndex == 1 ? "#000000" : "#FFFFFF";
         _state.TextOpacity = textOpacity;
         _state.LineHeightMultiplier = lineHeight;
-        _state.CloseHotkey = HotkeyBox.Text;
         var error = _apply(_state);
         if (error is not null)
         {
@@ -71,53 +67,6 @@ public partial class SettingsWindow : Window
         }
 
         Close();
-    }
-
-    private void HotkeyBox_PreviewKeyDown(object sender, System.Windows.Input.KeyEventArgs e)
-    {
-        if (e.Key is Key.Tab or Key.Escape)
-        {
-            return;
-        }
-
-        var key = e.Key == Key.System ? e.SystemKey : e.Key;
-        if (IsModifierKey(key))
-        {
-            e.Handled = true;
-            return;
-        }
-
-        HotkeyBox.Text = FormatHotkey(Keyboard.Modifiers, key);
-        ErrorText.Text = string.Empty;
-        e.Handled = true;
-    }
-
-    private static bool IsModifierKey(Key key) => key is
-        Key.LeftCtrl or Key.RightCtrl or Key.LeftAlt or Key.RightAlt or Key.LeftShift or Key.RightShift;
-
-    private static string FormatHotkey(ModifierKeys modifiers, Key key)
-    {
-        var parts = new List<string>();
-        if (modifiers.HasFlag(ModifierKeys.Control))
-        {
-            parts.Add("Ctrl");
-        }
-        if (modifiers.HasFlag(ModifierKeys.Alt))
-        {
-            parts.Add("Alt");
-        }
-        if (modifiers.HasFlag(ModifierKeys.Shift))
-        {
-            parts.Add("Shift");
-        }
-
-        parts.Add(key switch
-        {
-            Key.Oem3 => "\u6CE2\u6D6A\u952E",
-            >= Key.D0 and <= Key.D9 => ((int)key - (int)Key.D0).ToString(CultureInfo.InvariantCulture),
-            _ => key.ToString(),
-        });
-        return string.Join("+", parts);
     }
 
     private void Cancel_Click(object sender, RoutedEventArgs e) => Close();

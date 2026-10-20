@@ -3,6 +3,7 @@ namespace FloatingTxtReader;
 public sealed class AppState
 {
     public const string DefaultCloseHotkey = "Ctrl+Alt+Q";
+    public const int MaxFastForwardLinesPerSecond = 30;
 
     public string? FilePath { get; set; }
     public int CurrentLine { get; set; }
@@ -21,4 +22,11 @@ public sealed class AppState
     public double TextOpacity { get; set; } = 0.95;
     public double LineHeightMultiplier { get; set; } = 1.45;
     public string CloseHotkey { get; set; } = DefaultCloseHotkey;
+    public string HideHotkey { get; set; } = "";
+    public string PreviousLineHotkey { get; set; } = "";
+    public string NextLineHotkey { get; set; } = "";
+    public string PreviousChapterHotkey { get; set; } = "";
+    public string NextChapterHotkey { get; set; } = "";
+    public string FastForwardHotkey { get; set; } = "";
+    public int FastForwardLinesPerSecond { get; set; } = 10;
 }
