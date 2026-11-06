@@ -41,6 +41,8 @@ public partial class MainWindow : Window
     private int _pendingScrollLines;
     private bool _keepTrayMenuOpen;
     private IntPtr _windowHandle;
+    private uint _fastForwardModifiers;
+    private uint _fastForwardKey;
 
     public MainWindow(AppState state)
     {
@@ -127,6 +129,10 @@ public partial class MainWindow : Window
     private void BuildTrayMenu(Forms.ContextMenuStrip menu)
     {
         StopFastForward();
+        for (var index = menu.Items.Count - 1; index >= 0; index--)
+        {
+            menu.Items[index].Dispose();
+        }
         menu.Items.Clear();
         var currentFileLabel = string.IsNullOrWhiteSpace(_state.FilePath)
             ? "\u5F53\u524D TXT\uFF1A\u672A\u7ED1\u5B9A"
@@ -217,18 +223,22 @@ public partial class MainWindow : Window
     private static List<string> WrapLines(string content, int charactersPerLine)
     {
         var lines = new List<string>();
-        foreach (var sourceLine in content.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n'))
+        var remaining = content.AsSpan();
+        while (true)
         {
+            var newline = remaining.IndexOfAny('\r', '\n');
+            var sourceLine = newline < 0 ? remaining : remaining[..newline];
             if (sourceLine.Length == 0)
             {
                 lines.Add(string.Empty);
-                continue;
             }
-
             for (var index = 0; index < sourceLine.Length; index += charactersPerLine)
             {
-                lines.Add(sourceLine.Substring(index, Math.Min(charactersPerLine, sourceLine.Length - index)));
+                lines.Add(sourceLine.Slice(index, Math.Min(charactersPerLine, sourceLine.Length - index)).ToString());
             }
+            if (newline < 0) break;
+            var newlineLength = remaining[newline] == '\r' && newline + 1 < remaining.Length && remaining[newline + 1] == '\n' ? 2 : 1;
+            remaining = remaining[(newline + newlineLength)..];
         }
         return lines;
     }
@@ -250,56 +260,40 @@ public partial class MainWindow : Window
         _chapters = [];
         for (var index = 0; index < _lines.Count; index++)
         {
-            var candidate = _lines[index].TrimStart('\uFEFF').TrimStart();
+            var candidate = _lines[index].AsSpan().TrimStart('\uFEFF').TrimStart();
             if (ChapterHeadingPattern.IsMatch(candidate))
             {
-                _chapters.Add((index, candidate.Trim()));
+                _chapters.Add((index, candidate.Trim().ToString()));
             }
         }
     }
 
     private int FindNextChapterLine()
     {
-        foreach (var (line, _) in _chapters)
-        {
-            if (line > _state.CurrentLine)
-            {
-                return line;
-            }
-        }
-        return -1;
+        var index = FindChapterIndex(_state.CurrentLine);
+        if (index < _chapters.Count && _chapters[index].Line == _state.CurrentLine) index++;
+        return index < _chapters.Count ? _chapters[index].Line : -1;
     }
 
     private int FindPreviousChapterLine() => FindPreviousChapterLineBefore(_state.CurrentLine);
 
     private void GoToChapterOffset(int chapterOffset)
     {
-        var targetLine = _state.CurrentLine;
+        if (_chapters.Count == 0 || chapterOffset == 0) return;
+        var index = FindChapterIndex(_state.CurrentLine);
         if (chapterOffset < 0)
         {
-            for (var index = 0; index < -chapterOffset; index++)
-            {
-                var previousChapterLine = FindPreviousChapterLineBefore(targetLine);
-                if (previousChapterLine < 0)
-                {
-                    break;
-                }
-                targetLine = previousChapterLine;
-            }
+            if (index == 0) return;
+            index = Math.Max(0, index + chapterOffset);
         }
         else
         {
-            for (var index = 0; index < chapterOffset; index++)
-            {
-                var nextChapterLine = _chapters.FirstOrDefault(chapter => chapter.Line > targetLine, (Line: -1, Title: string.Empty)).Line;
-                if (nextChapterLine < 0)
-                {
-                    break;
-                }
-                targetLine = nextChapterLine;
-            }
+            if (index < _chapters.Count && _chapters[index].Line == _state.CurrentLine) index++;
+            if (index == _chapters.Count) return;
+            index += Math.Min(chapterOffset - 1, _chapters.Count - 1 - index);
         }
 
+        var targetLine = _chapters[index].Line;
         if (targetLine != _state.CurrentLine)
         {
             GoToLine(targetLine);
@@ -308,14 +302,21 @@ public partial class MainWindow : Window
 
     private int FindPreviousChapterLineBefore(int line)
     {
-        for (var index = _chapters.Count - 1; index >= 0; index--)
+        var index = FindChapterIndex(line) - 1;
+        return index >= 0 ? _chapters[index].Line : -1;
+    }
+
+    private int FindChapterIndex(int line)
+    {
+        var low = 0;
+        var high = _chapters.Count;
+        while (low < high)
         {
-            if (_chapters[index].Line < line)
-            {
-                return _chapters[index].Line;
-            }
+            var middle = low + (high - low) / 2;
+            if (_chapters[middle].Line < line) low = middle + 1;
+            else high = middle;
         }
-        return -1;
+        return low;
     }
 
     private void RenderLines()
@@ -444,6 +445,7 @@ public partial class MainWindow : Window
 
     private string? ApplySettings(AppState updatedState)
     {
+        var rewrap = _state.CharactersPerLine != updatedState.CharactersPerLine;
         _state.VisibleLines = updatedState.VisibleLines;
         _state.CharactersPerLine = updatedState.CharactersPerLine;
         _state.FontFamily = updatedState.FontFamily;
@@ -453,7 +455,7 @@ public partial class MainWindow : Window
         _state.ForegroundColor = updatedState.ForegroundColor;
         _state.TextOpacity = updatedState.TextOpacity;
         _state.LineHeightMultiplier = updatedState.LineHeightMultiplier;
-        if (!string.IsNullOrWhiteSpace(_state.FilePath) && File.Exists(_state.FilePath))
+        if (rewrap && !string.IsNullOrWhiteSpace(_state.FilePath) && File.Exists(_state.FilePath))
         {
             LoadFile(_state.FilePath);
         }
@@ -540,6 +542,11 @@ public partial class MainWindow : Window
         if (_windowHandle == IntPtr.Zero || !Hotkeys.TryParse(binding.Shortcut, out var modifiers, out var key) ||
             !RegisterHotKey(_windowHandle, binding.Id, modifiers | ModNoRepeat, key)) return false;
         _registeredHotkeys.Add(binding.Id);
+        if (binding.Id == Hotkeys.FastForward)
+        {
+            _fastForwardModifiers = modifiers;
+            _fastForwardKey = key;
+        }
         return true;
     }
 
@@ -547,6 +554,8 @@ public partial class MainWindow : Window
     {
         foreach (var id in _registeredHotkeys) UnregisterHotKey(_windowHandle, id);
         _registeredHotkeys.Clear();
+        _fastForwardModifiers = 0;
+        _fastForwardKey = 0;
     }
 
     private IntPtr WindowMessageHook(IntPtr hwnd, int message, IntPtr wParam, IntPtr lParam, ref bool handled)
@@ -610,13 +619,13 @@ public partial class MainWindow : Window
 
     private bool IsFastForwardKeyHeld()
     {
-        if (!Hotkeys.TryParse(_state.FastForwardHotkey, out var modifiers, out var key) || !IsKeyDown((int)key)) return false;
+        if (_fastForwardKey == 0 || !IsKeyDown((int)_fastForwardKey)) return false;
         uint heldModifiers = 0;
         if (IsKeyDown(0x12)) heldModifiers |= 1;
         if (IsKeyDown(0x11)) heldModifiers |= 2;
         if (IsKeyDown(0x10)) heldModifiers |= 4;
         if (IsKeyDown(0x5B) || IsKeyDown(0x5C)) heldModifiers |= 8;
-        return heldModifiers == modifiers;
+        return heldModifiers == _fastForwardModifiers;
     }
 
     private static bool IsKeyDown(int key) => (GetAsyncKeyState(key) & 0x8000) != 0;

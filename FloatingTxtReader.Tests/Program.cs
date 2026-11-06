@@ -127,6 +127,15 @@ internal static class Program
             Check(Call(reader, "ApplyHotkeys", configured) is null, "Register all seven global shortcuts");
             Check(state.FastForwardLinesPerSecond == 5, "Apply custom fixed speed");
             Check(Field<HashSet<int>>(reader, "_registeredHotkeys").Count == 7, "All seven registrations are tracked");
+            Hotkeys.TryParse(configured.FastForwardHotkey, out var cachedModifiers, out var cachedKey);
+            Check(Field<uint>(reader, "_fastForwardModifiers") == cachedModifiers && Field<uint>(reader, "_fastForwardKey") == cachedKey,
+                "Successful registration caches parsed fast-forward key and modifiers");
+            var heldKeyCheck = (Func<bool>)typeof(MainWindow).GetMethod("IsFastForwardKeyHeld", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .CreateDelegate(typeof(Func<bool>), reader);
+            for (var i = 0; i < 100; i++) heldKeyCheck();
+            var beforeHeldKeyChecks = GC.GetAllocatedBytesForCurrentThread();
+            for (var i = 0; i < 1000; i++) heldKeyCheck();
+            Check(GC.GetAllocatedBytesForCurrentThread() == beforeHeldKeyChecks, "Fast-forward key polling does not allocate or reparse shortcut strings");
             var swap = configured.NextLineHotkey;
             configured.NextLineHotkey = configured.PreviousLineHotkey;
             configured.PreviousLineHotkey = swap;
@@ -240,14 +249,25 @@ internal static class Program
                 Check(state.FastForwardHotkey == oldShortcut, "Failed registration preserves saved bindings");
                 Check(state.FastForwardLinesPerSecond == oldSpeed, "Failed registration preserves saved speed");
                 Check(Field<HashSet<int>>(reader, "_registeredHotkeys").Count == 0, "Failed registration releases partial new bindings");
+                Check(Field<uint>(reader, "_fastForwardKey") == 0 && Field<uint>(reader, "_fastForwardModifiers") == 0,
+                    "Failed registration clears fast-forward key cache");
                 editor.Close();
                 Check(Field<HashSet<int>>(reader, "_registeredHotkeys").Count == 7, "Closing failed editor restores old working shortcuts");
+                Check(Field<uint>(reader, "_fastForwardKey") == cachedKey && Field<uint>(reader, "_fastForwardModifiers") == cachedModifiers,
+                    "Closing failed editor restores cached fast-forward binding");
             }
             finally
             {
                 reservation.StandardInput.WriteLine();
                 if (!reservation.WaitForExit(5000)) reservation.Kill();
             }
+            configured.FastForwardHotkey = "";
+            Check(Call(reader, "ApplyHotkeys", configured) is null && Field<uint>(reader, "_fastForwardKey") == 0,
+                "Clearing fast-forward shortcut clears cached key");
+            configured.FastForwardHotkey = state.CloseHotkey;
+            Check(Call(reader, "ApplyHotkeys", configured) is string && Field<uint>(reader, "_fastForwardKey") == 0,
+                "Invalid shortcut update does not populate fast-forward cache");
+            PerformanceRegression.Run(Check);
         }
         finally
         {

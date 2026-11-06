@@ -29,10 +29,11 @@ public partial class ChapterListWindow : Window
 
     private void ApplyFilter(string filter)
     {
+        var keyword = filter.Trim();
         _visibleChapters.Clear();
-        _visibleChapters.AddRange(string.IsNullOrWhiteSpace(filter)
+        _visibleChapters.AddRange(keyword.Length == 0
             ? _chapters
-            : _chapters.Where(chapter => chapter.Title.Contains(filter.Trim(), StringComparison.OrdinalIgnoreCase)));
+            : _chapters.Where(chapter => chapter.Title.Contains(keyword, StringComparison.OrdinalIgnoreCase)));
 
         ChapterList.ItemsSource = _visibleChapters.Select(chapter => chapter.Title).ToList();
         if (_visibleChapters.Count == 0)
