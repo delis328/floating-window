@@ -12,8 +12,9 @@ public sealed class ChapterJumpControl : Forms.UserControl
 
     public ChapterJumpControl()
     {
-        Height = 30;
-        Width = 240;
+        Height = 34;
+        Width = 256;
+        BackColor = TrayMenuStyle.Surface;
         Margin = new Forms.Padding(0);
         Padding = new Forms.Padding(0);
 
@@ -23,6 +24,9 @@ public sealed class ChapterJumpControl : Forms.UserControl
         _previousChapterButton.Margin = new Forms.Padding(0);
         _nextChapterButton.Margin = new Forms.Padding(0);
         _nextFiveChaptersButton.Margin = new Forms.Padding(0);
+        TrayMenuStyle.Apply(_previousChapterButton, false);
+        TrayMenuStyle.Apply(_nextChapterButton, true);
+        TrayMenuStyle.Apply(_nextFiveChaptersButton, false);
         _previousChapterButton.Click += (_, _) => JumpRequested?.Invoke(-1);
         _nextChapterButton.Click += (_, _) => JumpRequested?.Invoke(1);
         _nextFiveChaptersButton.Click += (_, _) => JumpRequested?.Invoke(5);
@@ -47,9 +51,11 @@ public sealed class ChapterJumpControl : Forms.UserControl
 
     private void ResizeButtons()
     {
-        var quarter = Math.Max(1, ClientSize.Width / 4);
+        const int gap = 4;
+        var quarter = Math.Max(1, (ClientSize.Width - gap * 2) / 4);
         _previousChapterButton.SetBounds(0, 0, quarter, ClientSize.Height);
-        _nextChapterButton.SetBounds(quarter, 0, quarter * 2, ClientSize.Height);
-        _nextFiveChaptersButton.SetBounds(quarter * 3, 0, ClientSize.Width - quarter * 3, ClientSize.Height);
+        _nextChapterButton.SetBounds(quarter + gap, 0, quarter * 2, ClientSize.Height);
+        var lastButtonLeft = quarter * 3 + gap * 2;
+        _nextFiveChaptersButton.SetBounds(lastButtonLeft, 0, ClientSize.Width - lastButtonLeft, ClientSize.Height);
     }
 }

@@ -78,14 +78,81 @@ internal static class PerformanceRegression
                 return items.Cast<object>().Single(item => item.GetType().Name == "ToolStripControlHost");
             }
             var host = RebuildMenu();
+            var menuItems = ((IEnumerable)menu.GetType().GetProperty("Items")!.GetValue(menu)!).Cast<object>().ToArray();
+            var settingsItem = menuItems.SingleOrDefault(item => (string)item.GetType().GetProperty("Text")!.GetValue(item)! == "设置");
+            check(settingsItem is not null, "Tray menu groups infrequent settings into one submenu");
+            var settingsItems = ((IEnumerable)settingsItem!.GetType().GetProperty("DropDownItems")!.GetValue(settingsItem)!).Cast<object>().ToArray();
+            check(settingsItems.Select(item => (string)item.GetType().GetProperty("Text")!.GetValue(item)!)
+                .SequenceEqual(new[] { "阅读设置...", "快捷键设置..." }), "Settings submenu preserves both settings entries");
+            Field<DispatcherTimer>(reader, "_saveTimer").Stop();
+            reader.Show();
+            settingsItems[0].GetType().GetMethod("PerformClick")!.Invoke(settingsItems[0], null);
+            var readingSettings = Field<System.Windows.Window>(reader, "_settingsWindow");
+            check(readingSettings.IsVisible, "Reading settings remain accessible through submenu");
+            readingSettings.Close();
+            settingsItems[1].GetType().GetMethod("PerformClick")!.Invoke(settingsItems[1], null);
+            var hotkeySettings = Field<System.Windows.Window>(reader, "_hotkeySettingsWindow");
+            check(hotkeySettings.IsVisible, "Hotkey settings remain accessible through submenu");
+            hotkeySettings.Close();
+            check(menuItems.Count(item => item.GetType().Name == "ToolStripSeparator") == 3,
+                "Tray menu separates current file, reading, window controls and utilities");
+            var renderedSize = (System.Drawing.Size)menu.GetType().GetMethod("GetPreferredSize")!
+                .Invoke(menu, new object[] { System.Drawing.Size.Empty })!;
+            menu.GetType().GetProperty("Size")!.SetValue(menu, renderedSize);
+            menu.GetType().GetMethod("PerformLayout", Type.EmptyTypes)!.Invoke(menu, null);
+            ForceHandles(menu);
+            using (var bitmap = new System.Drawing.Bitmap(renderedSize.Width, renderedSize.Height))
+            {
+                menu.GetType().GetMethod("DrawToBitmap")!.Invoke(menu,
+                    new object[] { bitmap, new System.Drawing.Rectangle(System.Drawing.Point.Empty, renderedSize) });
+                check(menuItems.Where(item => item.GetType().Name == "ToolStripSeparator").All(item =>
+                {
+                    var bounds = (System.Drawing.Rectangle)item.GetType().GetProperty("Bounds")!.GetValue(item)!;
+                    var y = bounds.Top + bounds.Height / 2;
+                    var center = bitmap.GetPixel(bounds.Left + bounds.Width / 2, y);
+                    var edge = bitmap.GetPixel(bounds.Left + 1, y);
+                    return edge.R - center.R >= 12 && edge.G - center.G >= 12 && edge.B - center.B >= 12;
+                }), "All three group separators draw visible inset lines on the rounded menu");
+            }
+            check((string)menuItems[^1].GetType().GetProperty("Text")!.GetValue(menuItems[^1])! == "退出应用",
+                "Exit stays last in tray menu");
+            var settingsDropdown = settingsItem.GetType().GetProperty("DropDown")!.GetValue(settingsItem)!;
+            ForceHandles(settingsDropdown);
             var control = host.GetType().GetProperty("Control")!.GetValue(host)!;
             ForceHandles(control);
+            var menuRegion = menu.GetType().GetProperty("Region")!.GetValue(menu)!;
+            check(menuRegion is not null && !(bool)menuRegion.GetType().GetMethod("IsVisible", new[] { typeof(float), typeof(float) })!
+                .Invoke(menuRegion, new object[] { 0f, 0f })!, "Rounded tray menu excludes outer corners from its hit region");
+            var childButtons = ((IEnumerable)control.GetType().GetProperty("Controls")!.GetValue(control)!).Cast<object>().ToArray();
+            check(childButtons.All(button =>
+            {
+                var region = button.GetType().GetProperty("Region")!.GetValue(button);
+                return region is not null && !(bool)region.GetType().GetMethod("IsVisible", new[] { typeof(float), typeof(float) })!
+                    .Invoke(region, new object[] { 0f, 0f })!;
+            }), "Chapter buttons have rounded native hit regions");
+            var textColor = (System.Drawing.Color)menu.GetType().GetProperty("ForeColor")!.GetValue(menu)!;
+            var background = (System.Drawing.Color)menu.GetType().GetProperty("BackColor")!.GetValue(menu)!;
+            var disabledText = (System.Drawing.Color)typeof(TrayMenuStyle).GetField("Muted", BindingFlags.Static | BindingFlags.NonPublic)!.GetValue(null)!;
+            var buttonBackground = (System.Drawing.Color)typeof(TrayMenuStyle).GetField("ButtonSurface", BindingFlags.Static | BindingFlags.NonPublic)!.GetValue(null)!;
+            check(Contrast(textColor, background) >= 4.5 && Contrast(disabledText, buttonBackground) >= 4.5 && childButtons.All(button =>
+                Contrast((System.Drawing.Color)button.GetType().GetProperty("ForeColor")!.GetValue(button)!,
+                    (System.Drawing.Color)button.GetType().GetProperty("BackColor")!.GetValue(button)!) >= 4.5),
+                "Soft menu and enabled/disabled button text retain readable contrast");
+            var buttons = ((IEnumerable)control.GetType().GetProperty("Controls")!.GetValue(control)!).Cast<object>()
+                .OrderBy(button => ((System.Drawing.Rectangle)button.GetType().GetProperty("Bounds")!.GetValue(button)!).X)
+                .Select(button => (System.Drawing.Rectangle)button.GetType().GetProperty("Bounds")!.GetValue(button)!).ToArray();
+            check(buttons.Length == 3 && buttons[1].Left - buttons[0].Right >= 4 && buttons[2].Left - buttons[1].Right >= 4 &&
+                buttons[1].Width == buttons[0].Width * 2 && Math.Abs(buttons[2].Width - buttons[0].Width) <= 3,
+                "Chapter buttons keep 1:2:1 proportions with gaps between hit areas");
             RebuildMenu();
+            check((bool)settingsDropdown.GetType().GetProperty("IsDisposed")!.GetValue(settingsDropdown)!,
+                "Rebuilding tray menu also releases settings submenu controls");
             check((bool)host.GetType().GetProperty("IsDisposed")!.GetValue(host)! &&
                 (bool)control.GetType().GetProperty("IsDisposed")!.GetValue(control)!, "Rebuilding tray menu disposes old host and native controls");
             host = RebuildMenu();
             ForceHandles(host.GetType().GetProperty("Control")!.GetValue(host)!);
             var handlesBefore = GetGuiResources(Process.GetCurrentProcess().Handle, 1);
+            var gdiBefore = GetGuiResources(Process.GetCurrentProcess().Handle, 0);
             for (var i = 0; i < 100; i++)
             {
                 host = RebuildMenu();
@@ -93,6 +160,19 @@ internal static class PerformanceRegression
             }
             var after = GetGuiResources(Process.GetCurrentProcess().Handle, 1);
             check(after <= handlesBefore + 8, $"Tray menu USER handles stay bounded after 100 rebuilds ({handlesBefore} -> {after})");
+            var gdiAfter = GetGuiResources(Process.GetCurrentProcess().Handle, 0);
+            check(gdiAfter <= gdiBefore + 8, $"Rounded menu GDI resources stay bounded after 100 rebuilds ({gdiBefore} -> {gdiAfter})");
+            var originalPath = state.FilePath;
+            var normalSize = (System.Drawing.Size)menu.GetType().GetMethod("GetPreferredSize")!.Invoke(menu, new object[] { System.Drawing.Size.Empty })!;
+            state.FilePath = new string('长', 80) + ".txt";
+            RebuildMenu();
+            var fileItem = ((IEnumerable)menu.GetType().GetProperty("Items")!.GetValue(menu)!).Cast<object>().First();
+            check(((string)fileItem.GetType().GetProperty("Text")!.GetValue(fileItem)!).Length < 40 &&
+                ((string)fileItem.GetType().GetProperty("ToolTipText")!.GetValue(fileItem)!).Contains(state.FilePath),
+                "Long TXT names stay compact while tooltip preserves full path");
+            var longNameSize = (System.Drawing.Size)menu.GetType().GetMethod("GetPreferredSize")!.Invoke(menu, new object[] { System.Drawing.Size.Empty })!;
+            check(longNameSize.Width <= normalSize.Width + 4, "Long TXT names do not widen tray menu");
+            state.FilePath = originalPath;
 
             SetField(reader, "_lines", Enumerable.Range(0, 120).Select(i => $"line {i}").ToList());
             state.VisibleLines = 1;
@@ -162,6 +242,14 @@ internal static class PerformanceRegression
     {
         _ = control.GetType().GetProperty("Handle")!.GetValue(control);
         foreach (var child in (IEnumerable)control.GetType().GetProperty("Controls")!.GetValue(control)!) ForceHandles(child);
+    }
+    private static double Contrast(System.Drawing.Color first, System.Drawing.Color second)
+    {
+        static double Linear(byte value) => value / 255d <= .04045 ? value / 255d / 12.92 : Math.Pow((value / 255d + .055) / 1.055, 2.4);
+        static double Luminance(System.Drawing.Color color) => .2126 * Linear(color.R) + .7152 * Linear(color.G) + .0722 * Linear(color.B);
+        var a = Luminance(first);
+        var b = Luminance(second);
+        return (Math.Max(a, b) + .05) / (Math.Min(a, b) + .05);
     }
     private static T Field<T>(object target, string name) => (T)target.GetType().GetField(name, Private)!.GetValue(target)!;
     private static void SetField(object target, string name, object value) => target.GetType().GetField(name, Private)!.SetValue(target, value);

@@ -92,6 +92,7 @@ public partial class MainWindow : Window
             Visible = true,
         };
         tray.ContextMenuStrip = new Forms.ContextMenuStrip();
+        TrayMenuStyle.Apply(tray.ContextMenuStrip);
         tray.ContextMenuStrip.Opening += (_, _) => BuildTrayMenu(tray.ContextMenuStrip!);
         tray.ContextMenuStrip.Closing += (_, e) =>
         {
@@ -134,13 +135,17 @@ public partial class MainWindow : Window
             menu.Items[index].Dispose();
         }
         menu.Items.Clear();
+        var fileName = Path.GetFileName(_state.FilePath);
+        if (fileName is { Length: > 14 }) fileName = fileName[..7] + "…" + fileName[^6..];
         var currentFileLabel = string.IsNullOrWhiteSpace(_state.FilePath)
             ? "\u5F53\u524D TXT\uFF1A\u672A\u7ED1\u5B9A"
-            : $"\u5F53\u524D TXT\uFF1A{Path.GetFileName(_state.FilePath)}";
-        menu.Items.Add(currentFileLabel, null, (_, _) => ChooseFile());
-        menu.Items.Add("\u9605\u8BFB\u8BBE\u7F6E...", null, (_, _) => ShowSettings());
-        menu.Items.Add("快捷键设置...", null, (_, _) => ShowHotkeySettings());
-        var chapterJumpControl = new ChapterJumpControl();
+            : $"\u5F53\u524D TXT\uFF1A{fileName}";
+        var fileItem = menu.Items.Add(currentFileLabel, null, (_, _) => ChooseFile());
+        fileItem.ToolTipText = string.IsNullOrWhiteSpace(_state.FilePath)
+            ? "点击选择 TXT 文件"
+            : _state.FilePath + "\n点击更换 TXT 文件";
+        menu.Items.Add(new Forms.ToolStripSeparator());
+        var chapterJumpControl = new ChapterJumpControl { Font = menu.Font };
         chapterJumpControl.SetAvailable(FindPreviousChapterLine() >= 0, FindNextChapterLine() >= 0);
         chapterJumpControl.MouseDown += (_, _) => _keepTrayMenuOpen = true;
         chapterJumpControl.JumpRequested += count =>
@@ -155,17 +160,28 @@ public partial class MainWindow : Window
         menu.Items.Add(new Forms.ToolStripControlHost(chapterJumpControl)
         {
             AutoSize = false,
-            Size = new System.Drawing.Size(240, 30),
+            Size = new System.Drawing.Size(256, 34),
             Padding = new Forms.Padding(0),
+            Margin = new Forms.Padding(6, 4, 6, 6),
         });
         menu.Items.Add(new Forms.ToolStripMenuItem("\u7AE0\u8282\u5217\u8868...", null, (_, _) => ShowChapterList())
         {
             Enabled = _chapters.Count > 0,
         });
+        menu.Items.Add(new Forms.ToolStripSeparator());
         menu.Items.Add(_state.IsLocked ? "\u89E3\u9501\u7A97\u53E3" : "\u9501\u5B9A\u7A97\u53E3", null, (_, _) => ToggleLock());
         menu.Items.Add("\u590D\u4F4D\u4F4D\u7F6E", null, (_, _) => ResetWindowPosition());
         menu.Items.Add(new Forms.ToolStripSeparator());
-        menu.Items.Add("\u9000\u51FA", null, (_, _) => ExitApplication());
+        var settingsItem = new Forms.ToolStripMenuItem("设置");
+        var settingsDropdown = (Forms.ToolStripDropDownMenu)settingsItem.DropDown;
+        TrayMenuStyle.Apply(settingsDropdown);
+        settingsDropdown.Items.Add("\u9605\u8BFB\u8BBE\u7F6E...", null, (_, _) => ShowSettings());
+        settingsDropdown.Items.Add("快捷键设置...", null, (_, _) => ShowHotkeySettings());
+        foreach (Forms.ToolStripItem item in settingsDropdown.Items) item.Padding = new Forms.Padding(16, 7, 16, 7);
+        menu.Items.Add(settingsItem);
+        menu.Items.Add("退出应用", null, (_, _) => ExitApplication());
+        foreach (var item in menu.Items.OfType<Forms.ToolStripMenuItem>()) item.Padding = new Forms.Padding(16, 7, 16, 7);
+        foreach (var separator in menu.Items.OfType<Forms.ToolStripSeparator>()) separator.Margin = new Forms.Padding(0, 3, 0, 3);
     }
 
     private void ChooseFile()
