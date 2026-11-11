@@ -4,6 +4,18 @@ Windows 桌面悬浮 TXT 阅读器：无边框、半透明、始终置顶的小�
 
 基于 .NET 8 WPF 开发，托盘常驻，窗口本身只显示当前几行文字，不抢焦点、不占任务栏。
 
+## 下载
+
+[前往 Releases 下载最新版](https://github.com/delis328/floating-window/releases/latest)
+
+- **轻量版 ZIP**：下载 `FloatingTxtReader-win-x64-framework-dependent.zip`，完整解压后运行；需要安装 **.NET 8 Desktop Runtime x64**，不要只复制其中的 exe。
+- **免环境单文件版**：下载 `FloatingTxtReader-win-x64-standalone.exe`，无需另装 .NET 环境，直接运行；首次启动可能需要短暂解压运行组件。
+- `Source code (zip)` / `Source code (tar.gz)` 是源码，不是可直接运行的程序；可使用附件 `SHA256SUMS.txt` 校验下载文件。
+
+两个版本均不附带 TXT 和个人配置；首次使用请从托盘选择自己的 TXT，之后会自动保存阅读进度。
+
+> 运行环境说明：当前为 .NET 8 兼容版，.NET 8 已于 **2026-11-10** 结束官方支持。v1.2.0 自包含版使用最终补丁 **8.0.34**；后续长期维护需要迁移到受支持的框架版本。
+
 ## 功能
 
 - **悬浮阅读**：无边框透明窗口，始终置顶，不显示在任务栏。
