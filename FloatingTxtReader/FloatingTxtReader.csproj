@@ -11,5 +11,7 @@
   <ItemGroup>
     <Resource Include="Assets\FloatingTxtReader.ico" />
     <InternalsVisibleTo Include="FloatingTxtReader.Tests" />
+    <!-- Avoid legacy WISP capture failures when transparent popups close. -->
+    <RuntimeHostConfigurationOption Include="Switch.System.Windows.Input.Stylus.EnablePointerSupport" Value="true" />
   </ItemGroup>
 </Project>

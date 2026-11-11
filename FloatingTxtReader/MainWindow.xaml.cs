@@ -27,6 +27,7 @@ public partial class MainWindow : Window
     private readonly DispatcherTimer _saveTimer;
     private readonly DispatcherTimer _scrollTimer;
     private readonly Forms.NotifyIcon _trayIcon;
+    private readonly TrayMenu _trayMenu = new();
     private readonly DispatcherTimer _fastForwardTimer;
     private readonly Stopwatch _fastForwardWatch = new();
     private readonly HashSet<int> _registeredHotkeys = [];
@@ -39,7 +40,6 @@ public partial class MainWindow : Window
     private ChapterListWindow? _chapterListWindow;
     private int _wheelRemainder;
     private int _pendingScrollLines;
-    private bool _keepTrayMenuOpen;
     private IntPtr _windowHandle;
     private uint _fastForwardModifiers;
     private uint _fastForwardKey;
@@ -91,15 +91,23 @@ public partial class MainWindow : Window
             Text = "TXT \u60AC\u6D6E\u9605\u8BFB\u5668",
             Visible = true,
         };
-        tray.ContextMenuStrip = new Forms.ContextMenuStrip();
-        TrayMenuStyle.Apply(tray.ContextMenuStrip);
-        tray.ContextMenuStrip.Opening += (_, _) => BuildTrayMenu(tray.ContextMenuStrip!);
-        tray.ContextMenuStrip.Closing += (_, e) =>
+        _trayMenu.PlacementTarget = this;
+        _trayMenu.FileItem.Click += (_, _) => RunTrayAction(ChooseFile);
+        _trayMenu.ChapterListItem.Click += (_, _) => RunTrayAction(ShowChapterList);
+        _trayMenu.LockItem.Click += (_, _) => RunTrayAction(ToggleLock);
+        _trayMenu.ResetPositionItem.Click += (_, _) => RunTrayAction(ResetWindowPosition);
+        _trayMenu.ReadingSettingsItem.Click += (_, _) => RunTrayAction(ShowSettings);
+        _trayMenu.HotkeySettingsItem.Click += (_, _) => RunTrayAction(ShowHotkeySettings);
+        _trayMenu.ExitItem.Click += (_, _) => RunTrayAction(ExitApplication);
+        _trayMenu.PreviousChapterButton.Click += (_, _) => JumpFromTray(-1);
+        _trayMenu.NextChapterButton.Click += (_, _) => JumpFromTray(1);
+        tray.MouseUp += (_, e) =>
         {
-            if (_keepTrayMenuOpen)
+            if (e.Button == Forms.MouseButtons.Right)
             {
-                e.Cancel = true;
-                _keepTrayMenuOpen = false;
+                _trayMenu.Close();
+                BuildTrayMenu(_trayMenu);
+                _trayMenu.IsOpen = true;
             }
         };
         tray.DoubleClick += (_, _) => ShowSettings();
@@ -127,61 +135,39 @@ public partial class MainWindow : Window
         return (System.Drawing.Icon)System.Drawing.SystemIcons.Application.Clone();
     }
 
-    private void BuildTrayMenu(Forms.ContextMenuStrip menu)
+    private void RunTrayAction(Action action)
+    {
+        _trayMenu.Close();
+        action();
+    }
+
+    private void JumpFromTray(int offset)
+    {
+        GoToChapterOffset(offset);
+        UpdateTrayNavigation(_trayMenu);
+    }
+
+    private void UpdateTrayNavigation(TrayMenu menu)
+    {
+        menu.PreviousChapterButton.IsEnabled = FindPreviousChapterLine() >= 0;
+        menu.NextChapterButton.IsEnabled = FindNextChapterLine() >= 0;
+        menu.ChapterListItem.IsEnabled = _chapters.Count > 0;
+    }
+
+    private void BuildTrayMenu(TrayMenu menu)
     {
         StopFastForward();
-        for (var index = menu.Items.Count - 1; index >= 0; index--)
-        {
-            menu.Items[index].Dispose();
-        }
-        menu.Items.Clear();
         var fileName = Path.GetFileName(_state.FilePath);
         if (fileName is { Length: > 14 }) fileName = fileName[..7] + "…" + fileName[^6..];
         var currentFileLabel = string.IsNullOrWhiteSpace(_state.FilePath)
             ? "\u5F53\u524D TXT\uFF1A\u672A\u7ED1\u5B9A"
             : $"\u5F53\u524D TXT\uFF1A{fileName}";
-        var fileItem = menu.Items.Add(currentFileLabel, null, (_, _) => ChooseFile());
-        fileItem.ToolTipText = string.IsNullOrWhiteSpace(_state.FilePath)
+        menu.FileItem.Header = currentFileLabel;
+        menu.FileItem.ToolTip = string.IsNullOrWhiteSpace(_state.FilePath)
             ? "点击选择 TXT 文件"
             : _state.FilePath + "\n点击更换 TXT 文件";
-        menu.Items.Add(new Forms.ToolStripSeparator());
-        var chapterJumpControl = new ChapterJumpControl { Font = menu.Font };
-        chapterJumpControl.SetAvailable(FindPreviousChapterLine() >= 0, FindNextChapterLine() >= 0);
-        chapterJumpControl.MouseDown += (_, _) => _keepTrayMenuOpen = true;
-        chapterJumpControl.JumpRequested += count =>
-        {
-            _keepTrayMenuOpen = true;
-            GoToChapterOffset(count);
-            chapterJumpControl.SetAvailable(FindPreviousChapterLine() >= 0, FindNextChapterLine() >= 0);
-            Dispatcher.BeginInvoke(
-                DispatcherPriority.Background,
-                new Action(() => _keepTrayMenuOpen = false));
-        };
-        menu.Items.Add(new Forms.ToolStripControlHost(chapterJumpControl)
-        {
-            AutoSize = false,
-            Size = new System.Drawing.Size(256, 34),
-            Padding = new Forms.Padding(0),
-            Margin = new Forms.Padding(6, 4, 6, 6),
-        });
-        menu.Items.Add(new Forms.ToolStripMenuItem("\u7AE0\u8282\u5217\u8868...", null, (_, _) => ShowChapterList())
-        {
-            Enabled = _chapters.Count > 0,
-        });
-        menu.Items.Add(new Forms.ToolStripSeparator());
-        menu.Items.Add(_state.IsLocked ? "\u89E3\u9501\u7A97\u53E3" : "\u9501\u5B9A\u7A97\u53E3", null, (_, _) => ToggleLock());
-        menu.Items.Add("\u590D\u4F4D\u4F4D\u7F6E", null, (_, _) => ResetWindowPosition());
-        menu.Items.Add(new Forms.ToolStripSeparator());
-        var settingsItem = new Forms.ToolStripMenuItem("设置");
-        var settingsDropdown = (Forms.ToolStripDropDownMenu)settingsItem.DropDown;
-        TrayMenuStyle.Apply(settingsDropdown);
-        settingsDropdown.Items.Add("\u9605\u8BFB\u8BBE\u7F6E...", null, (_, _) => ShowSettings());
-        settingsDropdown.Items.Add("快捷键设置...", null, (_, _) => ShowHotkeySettings());
-        foreach (Forms.ToolStripItem item in settingsDropdown.Items) item.Padding = new Forms.Padding(16, 7, 16, 7);
-        menu.Items.Add(settingsItem);
-        menu.Items.Add("退出应用", null, (_, _) => ExitApplication());
-        foreach (var item in menu.Items.OfType<Forms.ToolStripMenuItem>()) item.Padding = new Forms.Padding(16, 7, 16, 7);
-        foreach (var separator in menu.Items.OfType<Forms.ToolStripSeparator>()) separator.Margin = new Forms.Padding(0, 3, 0, 3);
+        menu.LockItem.Header = _state.IsLocked ? "\u89E3\u9501\u7A97\u53E3" : "\u9501\u5B9A\u7A97\u53E3";
+        UpdateTrayNavigation(menu);
     }
 
     private void ChooseFile()
@@ -817,6 +803,7 @@ public partial class MainWindow : Window
         SettingsStore.Save(_state);
         StopFastForward();
         UnregisterHotkeys();
+        _trayMenu.Close();
         _trayIcon.Visible = false;
         _trayIcon.Dispose();
         System.Windows.Application.Current.Shutdown();

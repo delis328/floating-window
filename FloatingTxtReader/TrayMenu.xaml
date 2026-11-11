@@ -1,0 +1,175 @@
+<ContextMenu x:Class="FloatingTxtReader.TrayMenu"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             Width="240" FontFamily="Microsoft YaHei UI" FontSize="12"
+             Foreground="#2F3933" Background="Transparent"
+             Placement="MousePoint" StaysOpen="False" HasDropShadow="False">
+    <ContextMenu.Resources>
+        <SolidColorBrush x:Key="MenuSurface" Color="#E8EFEA" />
+        <SolidColorBrush x:Key="MenuOutline" Color="#74857B" />
+        <SolidColorBrush x:Key="ChapterHover" Color="#DFE8E2" />
+        <SolidColorBrush x:Key="ChapterPressed" Color="#CFDDD3" />
+        <Style TargetType="Separator">
+            <Setter Property="Height" Value="8" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Separator">
+                        <Border Height="1" Background="#DAE2DC" Margin="6,0" VerticalAlignment="Center" />
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style TargetType="Button">
+            <Setter Property="Background" Value="#EFF3F0" />
+            <Setter Property="Foreground" Value="#2F3933" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="ButtonSurface" Background="{TemplateBinding Background}" CornerRadius="10"
+                                BorderBrush="Transparent" BorderThickness="1">
+                            <ContentPresenter x:Name="ButtonLabel" HorizontalAlignment="Center" VerticalAlignment="Center"
+                                              TextElement.Foreground="{TemplateBinding Foreground}" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="ButtonSurface" Property="Background" Value="{DynamicResource ChapterHover}" />
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="ButtonSurface" Property="Background" Value="{DynamicResource ChapterPressed}" />
+                            </Trigger>
+                            <Trigger Property="IsKeyboardFocused" Value="True">
+                                <Setter TargetName="ButtonSurface" Property="BorderBrush" Value="#74857B" />
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Foreground" Value="#606D64" />
+                                <Setter TargetName="ButtonLabel" Property="TextElement.Foreground" Value="#606D64" />
+                                <Setter TargetName="ButtonSurface" Property="Background" Value="#EFF3F0" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style TargetType="MenuItem">
+            <Setter Property="MinHeight" Value="34" />
+            <Setter Property="Padding" Value="6,7" />
+            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="MenuItem">
+                        <Grid>
+                            <Border x:Name="RowSurface" Background="Transparent" CornerRadius="8"
+                                    Padding="{TemplateBinding Padding}">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="14" />
+                                    </Grid.ColumnDefinitions>
+                                    <ContentPresenter ContentSource="Header" RecognizesAccessKey="False" VerticalAlignment="Center" />
+                                    <Path x:Name="Arrow" Grid.Column="1" Data="M 0,0 L 3,3 L 0,6"
+                                          Stroke="#606D64" StrokeThickness="1" HorizontalAlignment="Right"
+                                          VerticalAlignment="Center" Visibility="Collapsed" />
+                                </Grid>
+                            </Border>
+                            <Popup x:Name="PART_Popup" AllowsTransparency="True" Focusable="False"
+                                   Placement="Right" HorizontalOffset="2" VerticalOffset="-10"
+                                   IsOpen="{Binding IsSubmenuOpen, RelativeSource={RelativeSource TemplatedParent}}"
+                                   PopupAnimation="None">
+                                <Border x:Name="SubmenuSurface" Background="{StaticResource MenuSurface}"
+                                        BorderBrush="{StaticResource MenuOutline}" BorderThickness="2"
+                                        CornerRadius="14" Padding="10" MinWidth="172">
+                                    <StackPanel IsItemsHost="True" KeyboardNavigation.DirectionalNavigation="Cycle" />
+                                </Border>
+                            </Popup>
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsHighlighted" Value="True">
+                                <Setter TargetName="RowSurface" Property="Background" Value="#DFE8E2" />
+                            </Trigger>
+                            <Trigger Property="HasItems" Value="True">
+                                <Setter TargetName="Arrow" Property="Visibility" Value="Visible" />
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Foreground" Value="#606D64" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </ContextMenu.Resources>
+    <ContextMenu.Template>
+        <ControlTemplate TargetType="ContextMenu">
+            <Border x:Name="MenuSurface" Background="{StaticResource MenuSurface}" BorderBrush="{StaticResource MenuOutline}"
+                    BorderThickness="2" CornerRadius="16" Padding="10">
+                <ItemsPresenter KeyboardNavigation.DirectionalNavigation="Cycle" />
+            </Border>
+        </ControlTemplate>
+    </ContextMenu.Template>
+    <ContextMenu.ItemsPanel>
+        <ItemsPanelTemplate>
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="8" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+            </Grid>
+        </ItemsPanelTemplate>
+    </ContextMenu.ItemsPanel>
+    <MenuItem x:Name="FileItem" Grid.Row="0" Grid.ColumnSpan="3" Header="当前 TXT：未绑定" MinHeight="36">
+        <MenuItem.HeaderTemplate>
+            <DataTemplate>
+                <TextBlock Text="{Binding}" TextTrimming="CharacterEllipsis" />
+            </DataTemplate>
+        </MenuItem.HeaderTemplate>
+    </MenuItem>
+    <Separator Grid.Row="1" Grid.ColumnSpan="3" />
+    <MenuItem x:Name="ChapterButtonsItem" Grid.Row="2" Grid.Column="2" Grid.RowSpan="4"
+              StaysOpenOnClick="True" Focusable="False" Padding="0">
+        <MenuItem.Template>
+            <ControlTemplate TargetType="MenuItem">
+                <ContentPresenter ContentSource="Header" HorizontalAlignment="Stretch" VerticalAlignment="Stretch" />
+            </ControlTemplate>
+        </MenuItem.Template>
+        <MenuItem.Header>
+            <Grid MinHeight="74" Margin="2,0">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="*" />
+                    <RowDefinition Height="6" />
+                    <RowDefinition Height="1.2*" />
+                </Grid.RowDefinitions>
+                <Button x:Name="PreviousChapterButton" Grid.Row="0" Content="上一章" />
+                <Button x:Name="NextChapterButton" Grid.Row="2" Content="下一章" Background="#D2E0D6" Foreground="#36523F"
+                        FontSize="13" FontWeight="SemiBold">
+                    <Button.Resources>
+                        <SolidColorBrush x:Key="ChapterHover" Color="#C7D8CC" />
+                        <SolidColorBrush x:Key="ChapterPressed" Color="#B9CEBF" />
+                    </Button.Resources>
+                </Button>
+            </Grid>
+        </MenuItem.Header>
+    </MenuItem>
+    <MenuItem x:Name="ChapterListItem" Grid.Row="2" Header="章节列表..." />
+    <Separator Grid.Row="3" />
+    <MenuItem x:Name="LockItem" Grid.Row="4" Header="锁定窗口" />
+    <MenuItem x:Name="ResetPositionItem" Grid.Row="5" Header="复位位置" />
+    <Separator Grid.Row="6" Grid.ColumnSpan="3" />
+    <MenuItem x:Name="SettingsItem" Grid.Row="7" Header="设置">
+        <MenuItem x:Name="ReadingSettingsItem" Header="阅读设置..." />
+        <MenuItem x:Name="HotkeySettingsItem" Header="快捷键设置..." />
+    </MenuItem>
+    <MenuItem x:Name="ExitItem" Grid.Row="8" Header="退出应用" />
+</ContextMenu>

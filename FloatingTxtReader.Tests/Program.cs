@@ -16,6 +16,7 @@ internal static class Program
     [STAThread]
     private static void Main(string[] args)
     {
+        AppContext.SetSwitch("Switch.System.Windows.Input.Stylus.EnablePointerSupport", true);
         if (args.Contains("--reserve-hotkey"))
         {
             var registered = RegisterHotKey(IntPtr.Zero, 99, 7, 0x78);
@@ -25,6 +26,16 @@ internal static class Program
             return;
         }
         var application = new Application { ShutdownMode = ShutdownMode.OnExplicitShutdown };
+        if (args.Length == 2 && args[0] == "--render-tray-preview")
+        {
+            application.Dispatcher.BeginInvoke(new Action(() =>
+            {
+                TrayMenuRegression.RenderPreview(args[1]);
+                application.Dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle, new Action(application.Shutdown));
+            }));
+            application.Run();
+            return;
+        }
         if (args.Length == 2 && args[0] == "--render-preview")
         {
             var preview = new HotkeySettingsWindow(new AppState(), _ => null);
@@ -267,6 +278,7 @@ internal static class Program
             configured.FastForwardHotkey = state.CloseHotkey;
             Check(Call(reader, "ApplyHotkeys", configured) is string && Field<uint>(reader, "_fastForwardKey") == 0,
                 "Invalid shortcut update does not populate fast-forward cache");
+            Field<DispatcherTimer>(reader, "_saveTimer").Stop();
             PerformanceRegression.Run(Check);
         }
         finally
