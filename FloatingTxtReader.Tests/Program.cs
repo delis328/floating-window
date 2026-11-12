@@ -26,6 +26,28 @@ internal static class Program
             return;
         }
         var application = new Application { ShutdownMode = ShutdownMode.OnExplicitShutdown };
+        if (args.Length == 2 && args[0] == "--render-blank-line-preview")
+        {
+            BlankLineRegression.RenderPreview(args[1]);
+            application.Shutdown();
+            return;
+        }
+        if (args.Length == 2 && args[0] == "--render-settings-preview")
+        {
+            SettingsAppearanceRegression.RenderPreview(args[1]);
+            application.Shutdown();
+            return;
+        }
+        if (args.Contains("--tray-interaction"))
+        {
+            TrayMenuInteraction.Run(application);
+            return;
+        }
+        if (args.Length == 2 && args[0] == "--tray-click-target")
+        {
+            TrayMenuInteraction.RunOutside(application, int.Parse(args[1]));
+            return;
+        }
         if (args.Length == 2 && args[0] == "--render-tray-preview")
         {
             application.Dispatcher.BeginInvoke(new Action(() =>
@@ -279,7 +301,9 @@ internal static class Program
             Check(Call(reader, "ApplyHotkeys", configured) is string && Field<uint>(reader, "_fastForwardKey") == 0,
                 "Invalid shortcut update does not populate fast-forward cache");
             Field<DispatcherTimer>(reader, "_saveTimer").Stop();
+            BlankLineRegression.Run(Check);
             PerformanceRegression.Run(Check);
+            SettingsAppearanceRegression.Run(Check);
         }
         finally
         {

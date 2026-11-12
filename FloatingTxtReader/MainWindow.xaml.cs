@@ -33,6 +33,8 @@ public partial class MainWindow : Window
     private readonly HashSet<int> _registeredHotkeys = [];
     private TimeSpan _lastFastForwardStep;
     private List<string> _lines = [];
+    private ReadingDocument? _document;
+    private BlankLinePreviewWindow? _blankLinePreview;
     private List<(int Line, string Title)> _chapters = [];
     private bool _isExiting;
     private SettingsWindow? _settingsWindow;
@@ -77,10 +79,7 @@ public partial class MainWindow : Window
         _trayIcon = CreateTrayIcon();
 
         ApplyAppearance();
-        if (!string.IsNullOrWhiteSpace(state.FilePath) && File.Exists(state.FilePath))
-        {
-            LoadFile(state.FilePath);
-        }
+        Loaded += LoadStartupFile;
     }
 
     private Forms.NotifyIcon CreateTrayIcon()
@@ -107,7 +106,7 @@ public partial class MainWindow : Window
             {
                 _trayMenu.Close();
                 BuildTrayMenu(_trayMenu);
-                _trayMenu.IsOpen = true;
+                _trayMenu.OpenFromTray();
             }
         };
         tray.DoubleClick += (_, _) => ShowSettings();
@@ -138,6 +137,11 @@ public partial class MainWindow : Window
     private void RunTrayAction(Action action)
     {
         _trayMenu.Close();
+        if (_blankLinePreview is { IsVisible: true } && action != (Action)ExitApplication)
+        {
+            _blankLinePreview.Activate();
+            return;
+        }
         action();
     }
 
@@ -179,11 +183,15 @@ public partial class MainWindow : Window
         };
         if (dialog.ShowDialog() == true)
         {
-            _state.FilePath = dialog.FileName;
-            _state.CurrentLine = 0;
             LoadFile(dialog.FileName);
-            SaveState();
         }
+    }
+
+    private void LoadStartupFile(object sender, RoutedEventArgs e)
+    {
+        Loaded -= LoadStartupFile;
+        if (_document is null && !string.IsNullOrWhiteSpace(_state.FilePath) && File.Exists(_state.FilePath))
+            LoadFile(_state.FilePath);
     }
 
     private void LoadFile(string filePath)
@@ -191,7 +199,23 @@ public partial class MainWindow : Window
         try
         {
             var content = ReadTextFile(filePath);
-            _lines = WrapLines(content, Math.Max(1, _state.CharactersPerLine));
+            var fullPath = Path.GetFullPath(filePath);
+            var sameFile = string.Equals(_state.FilePath, filePath, StringComparison.OrdinalIgnoreCase);
+            var choice = sameFile ? _state.CurrentFileRemoveBlankLines : null;
+            var document = ReadingDocument.Create(content, _state.CharactersPerLine, choice == true);
+            var sourceOffset = sameFile
+                ? _state.CurrentSourceOffset ?? document.SourceOffset(_state.CurrentLine) : 0;
+            if (choice is null)
+            {
+                choice = document.BlankLineCount > 0 && ConfirmBlankLineCleanup(fullPath, document);
+                if (_isExiting) return;
+                if (choice == true) document.RemoveBlankLines();
+            }
+            _state.CurrentFileRemoveBlankLines = choice;
+            _state.FilePath = fullPath;
+            _document = document;
+            _lines = document.Lines;
+            _state.CurrentLine = document.FindLine(sourceOffset);
             BuildChapterIndex();
             _chapterListWindow?.Close();
             _chapterListWindow = null;
@@ -203,9 +227,28 @@ public partial class MainWindow : Window
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or DecoderFallbackException)
         {
-            _lines = [];
-            _chapters = [];
             ReaderText.Text = $"\u65E0\u6CD5\u8BFB\u53D6\u6587\u672C\u6587\u4EF6: {ex.Message}";
+        }
+    }
+
+    private bool ConfirmBlankLineCleanup(string path, ReadingDocument document)
+    {
+        StopFastForward();
+        var restoreHotkeys = _hotkeySettingsWindow is not { IsVisible: true };
+        if (restoreHotkeys) UnregisterHotkeys();
+        var preview = new BlankLinePreviewWindow(path, document);
+        _blankLinePreview = preview;
+        try
+        {
+            if (_windowHandle != IntPtr.Zero) preview.Owner = this;
+            _trayMenu.ShowSettingsWindow(preview, modal: true);
+            return preview.RemoveBlankLines;
+        }
+        finally
+        {
+            preview.Close();
+            _blankLinePreview = null;
+            if (restoreHotkeys && !_isExiting) RegisterHotkeys();
         }
     }
 
@@ -220,29 +263,6 @@ public partial class MainWindow : Window
         {
             return File.ReadAllText(path, Encoding.GetEncoding("GB18030"));
         }
-    }
-
-    private static List<string> WrapLines(string content, int charactersPerLine)
-    {
-        var lines = new List<string>();
-        var remaining = content.AsSpan();
-        while (true)
-        {
-            var newline = remaining.IndexOfAny('\r', '\n');
-            var sourceLine = newline < 0 ? remaining : remaining[..newline];
-            if (sourceLine.Length == 0)
-            {
-                lines.Add(string.Empty);
-            }
-            for (var index = 0; index < sourceLine.Length; index += charactersPerLine)
-            {
-                lines.Add(sourceLine.Slice(index, Math.Min(charactersPerLine, sourceLine.Length - index)).ToString());
-            }
-            if (newline < 0) break;
-            var newlineLength = remaining[newline] == '\r' && newline + 1 < remaining.Length && remaining[newline + 1] == '\n' ? 2 : 1;
-            remaining = remaining[(newline + newlineLength)..];
-        }
-        return lines;
     }
 
     private int FindFirstContentLine()
@@ -406,6 +426,11 @@ public partial class MainWindow : Window
 
     private void ShowSettings()
     {
+        if (_blankLinePreview is { IsVisible: true })
+        {
+            _blankLinePreview.Activate();
+            return;
+        }
         StopFastForward();
         if (_settingsWindow is { IsVisible: true })
         {
@@ -415,7 +440,7 @@ public partial class MainWindow : Window
 
         _settingsWindow = new SettingsWindow(_state, ApplySettings);
         _settingsWindow.Owner = this;
-        _settingsWindow.Show();
+        _trayMenu.ShowSettingsWindow(_settingsWindow);
     }
 
     private void ShowChapterList()
@@ -488,7 +513,7 @@ public partial class MainWindow : Window
                 RegisterHotkeys();
             }
         };
-        _hotkeySettingsWindow.Show();
+        _trayMenu.ShowSettingsWindow(_hotkeySettingsWindow);
     }
 
     private string? ApplyHotkeys(AppState updatedState)
@@ -811,6 +836,7 @@ public partial class MainWindow : Window
 
     private void SaveState()
     {
+        if (_document is not null) _state.CurrentSourceOffset = _document.SourceOffset(_state.CurrentLine);
         _saveTimer.Stop();
         _saveTimer.Start();
     }

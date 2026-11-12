@@ -7,6 +7,8 @@ public sealed class AppState
 
     public string? FilePath { get; set; }
     public int CurrentLine { get; set; }
+    public int? CurrentSourceOffset { get; set; }
+    public bool? CurrentFileRemoveBlankLines { get; set; }
     public double WindowLeft { get; set; } = 180;
     public double WindowTop { get; set; } = 180;
     public double WindowWidth { get; set; } = 420;

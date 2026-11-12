@@ -20,11 +20,11 @@ public partial class HotkeySettingsWindow : Window
         SpeedRangeText.Text = $"1-{AppState.MaxFastForwardLinesPerSecond}，按住保持匀速";
         foreach (var binding in Hotkeys.GetBindings(state))
         {
-            var row = new DockPanel { Margin = new Thickness(0, 0, 0, 10) };
+            var row = new DockPanel { Margin = new Thickness(0, 0, 0, 6) };
             row.Children.Add(new TextBlock
             {
                 Text = binding.Label,
-                Width = 145,
+                Width = 110,
                 VerticalAlignment = VerticalAlignment.Center,
             });
             var box = new TextBox
@@ -37,7 +37,7 @@ public partial class HotkeySettingsWindow : Window
             };
             box.PreviewKeyDown += HotkeyBox_PreviewKeyDown;
             _boxes.Add(binding.Id, box);
-            var clearButton = new Button { Content = "清空", Width = 48, Margin = new Thickness(8, 0, 0, 0) };
+            var clearButton = new Button { Content = "清空", Width = 44, Margin = new Thickness(6, 0, 0, 0) };
             clearButton.Click += (_, _) => { box.Text = string.Empty; ErrorText.Text = string.Empty; };
             DockPanel.SetDock(clearButton, Dock.Right);
             row.Children.Add(clearButton);

@@ -114,8 +114,13 @@ internal static class TrayMenuRegression
         TrayMouseUp("Left");
         check(!menu.IsOpen, "Left tray click does not accidentally open the context menu");
         TrayMouseUp("Right");
-        check(menu.IsOpen, "Actual tray right-click event opens the WPF menu");
+        var traySource = PresentationSource.FromVisual(menu) as HwndSource;
+        check(menu.IsOpen
+                ? traySource is not null && GetForegroundWindow() == traySource.Handle && menu.IsKeyboardFocusWithin
+                : !ReferenceEquals(Mouse.Captured, menu),
+            "Tray callback opens with real foreground/keyboard focus, or fails closed if Windows denies activation");
         menu.Close();
+        check(Field<HwndSource?>(menu, "_popupSource") is null, "Closing the tray menu removes its native activation hook");
         menu.IsOpen = true;
         menu.UpdateLayout();
         var source = PresentationSource.FromVisual(menu) as HwndSource;
@@ -130,6 +135,17 @@ internal static class TrayMenuRegression
         var submenuBitmap = Render(submenu);
         check(HasTransparentAntialiasedCorners(submenuBitmap, 1) && HasTightBorder(submenuBitmap, 1),
             "Settings submenu has smooth alpha corners without an opaque fringe");
+        menu.HotkeySettingsItem.RaiseEvent(new KeyEventArgs(Keyboard.PrimaryDevice, PresentationSource.FromVisual(menu.HotkeySettingsItem)!, 0, Key.Escape)
+            { RoutedEvent = Keyboard.PreviewKeyDownEvent });
+        check(!menu.IsOpen && !popup.IsOpen && !menu.SettingsItem.IsSubmenuOpen,
+            "Escape closes both main menu and expanded settings submenu");
+        menu.IsOpen = true;
+        menu.SettingsItem.IsSubmenuOpen = true;
+        Call(menu, "PopupMessageHook", IntPtr.Zero, 0x001C, new IntPtr(1), IntPtr.Zero, false);
+        check(menu.IsOpen, "Application activation does not prematurely dismiss the tray menu");
+        Call(menu, "PopupMessageHook", IntPtr.Zero, 0x001C, IntPtr.Zero, IntPtr.Zero, false);
+        check(!menu.IsOpen && !menu.SettingsItem.IsSubmenuOpen,
+            "Cross-application deactivation closes menu and submenu together");
         menu.Close();
         check(!menu.SettingsItem.IsSubmenuOpen && !popup.IsOpen, "Closing main menu also closes its settings popup");
         reader.Hide();
@@ -138,14 +154,37 @@ internal static class TrayMenuRegression
             "Tray menu can open even when the reader is hidden");
         menu.Close();
         reader.Show();
+        menu.IsOpen = true;
+        menu.UpdateLayout();
+        var readingAnchor = ScreenBounds(menu);
         Click(menu.ReadingSettingsItem);
         var readingSettings = Field<Window>(reader, "_settingsWindow");
         check(readingSettings.IsVisible && !menu.IsOpen, "Reading settings command closes menu and opens existing settings window");
+        check(IsNextToMenu(readingSettings, readingAnchor, VisualTreeHelper.GetDpi(menu).DpiScaleX),
+            "Reading settings initially appear beside the tray menu instead of the reader");
+        readingSettings.Left += 24;
+        var readingMoved = new Point(readingSettings.Left, readingSettings.Top);
+        menu.IsOpen = true;
+        Click(menu.ReadingSettingsItem);
+        check(ReferenceEquals(Field<Window>(reader, "_settingsWindow"), readingSettings) &&
+            new Point(readingSettings.Left, readingSettings.Top) == readingMoved,
+            "Reactivating reading settings preserves a manually moved position");
         readingSettings.Close();
         menu.IsOpen = true;
+        menu.UpdateLayout();
+        var hotkeyAnchor = ScreenBounds(menu);
         Click(menu.HotkeySettingsItem);
         var hotkeySettings = Field<Window>(reader, "_hotkeySettingsWindow");
         check(hotkeySettings.IsVisible && !menu.IsOpen, "Hotkey settings command closes menu and opens existing editor");
+        check(IsNextToMenu(hotkeySettings, hotkeyAnchor, VisualTreeHelper.GetDpi(menu).DpiScaleX),
+            "Hotkey settings initially appear beside the tray menu instead of the screen center");
+        hotkeySettings.Left += 24;
+        var hotkeyMoved = new Point(hotkeySettings.Left, hotkeySettings.Top);
+        menu.IsOpen = true;
+        Click(menu.HotkeySettingsItem);
+        check(ReferenceEquals(Field<Window>(reader, "_hotkeySettingsWindow"), hotkeySettings) &&
+            new Point(hotkeySettings.Left, hotkeySettings.Top) == hotkeyMoved,
+            "Reactivating hotkey settings preserves a manually moved position");
         hotkeySettings.Close();
         menu.IsOpen = true;
         Click(menu.LockItem);
@@ -163,8 +202,32 @@ internal static class TrayMenuRegression
         menu.RaiseEvent(new KeyEventArgs(Keyboard.PrimaryDevice, inputSource, 0, Key.Escape) { RoutedEvent = Keyboard.KeyDownEvent });
         check(!menu.IsOpen, "Escape dismisses the actual WPF context menu");
         menu.IsOpen = true;
+        menu.UpdateLayout();
+        var escapeSource = (HwndSource)PresentationSource.FromVisual(menu)!;
+        SetFocus(escapeSource.Handle);
+        menu.Focus();
+        var nativeEscapeReceived = false;
+        KeyEventHandler nativeEscapeObserver = (_, e) => nativeEscapeReceived |= e.Key == Key.Escape;
+        menu.AddHandler(Keyboard.PreviewKeyDownEvent, nativeEscapeObserver, true);
+        try
+        {
+            PostMessage(escapeSource.Handle, 0x0100, new IntPtr(0x1B), new IntPtr(1));
+            var frame = new DispatcherFrame();
+            var timeout = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(100) };
+            timeout.Tick += (_, _) => { timeout.Stop(); frame.Continue = false; };
+            timeout.Start();
+            Dispatcher.PushFrame(frame);
+            check(nativeEscapeReceived && !menu.IsOpen,
+                "Native WM_KEYDOWN Escape reaches WPF input processing and closes the menu");
+        }
+        finally
+        {
+            menu.RemoveHandler(Keyboard.PreviewKeyDownEvent, nativeEscapeObserver);
+            menu.Close();
+        }
+        menu.IsOpen = true;
         Mouse.Capture(null);
-        check(!menu.IsOpen, "Losing mouse capture to an outside interaction dismisses the menu");
+        check(!menu.IsOpen, "Explicit WPF capture release dismisses menu independently of cross-process activation tests");
 
         for (var i = 0; i < 5; i++) { menu.IsOpen = true; menu.IsOpen = false; }
         var userBefore = GetGuiResources(Process.GetCurrentProcess().Handle, 1);
@@ -308,8 +371,18 @@ internal static class TrayMenuRegression
     }
 
     internal static void Click(MenuItem item) => item.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent, item));
+    private static Rect ScreenBounds(FrameworkElement element) => new(element.PointToScreen(new Point()),
+        element.PointToScreen(new Point(element.ActualWidth, element.ActualHeight)));
+    private static bool IsNextToMenu(Window window, Rect anchor, double scale)
+    {
+        var bounds = ScreenBounds(window);
+        return Math.Abs(bounds.Left - anchor.Right - 6 * scale) <= 1 || Math.Abs(anchor.Left - bounds.Right - 6 * scale) <= 1;
+    }
     private static T Field<T>(object target, string name) => (T)target.GetType().GetField(name, Private)!.GetValue(target)!;
     private static object? Call(object target, string name, params object[] args) => target.GetType().GetMethod(name, Private)!.Invoke(target, args);
     [DllImport("user32.dll")] private static extern int GetWindowLong(IntPtr window, int index);
+    [DllImport("user32.dll")] private static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")] private static extern IntPtr SetFocus(IntPtr window);
+    [DllImport("user32.dll")] private static extern bool PostMessage(IntPtr window, int message, IntPtr wParam, IntPtr lParam);
     [DllImport("user32.dll")] private static extern int GetGuiResources(IntPtr process, uint flag);
 }

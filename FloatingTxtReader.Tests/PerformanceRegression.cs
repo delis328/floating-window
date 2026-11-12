@@ -9,9 +9,7 @@ internal static class PerformanceRegression
 
     public static void Run(Action<bool, string> check)
     {
-        var wrap = (Func<string, int, List<string>>)typeof(MainWindow)
-            .GetMethod("WrapLines", BindingFlags.Static | BindingFlags.NonPublic)!
-            .CreateDelegate(typeof(Func<string, int, List<string>>));
+        static List<string> wrap(string content, int width) => ReadingDocument.Create(content, width).Lines;
         var samples = new[] { "", "\n", "\r", "\r\n", "\r\r\n", "a\n\n", "a\r\nb\rc\n", "\uFEFF第一卷 第一话 标题\r\n正文", "  \t\r\n\r\n", "甲乙😀丙丁\n123456789" };
         foreach (var width in new[] { 1, 2, 5, 20, 36, 500 })
             check(samples.All(sample => wrap(sample, width).SequenceEqual(ReferenceWrap(sample, width))), $"Preserve newline, empty line and character splitting at width {width}");
@@ -35,13 +33,14 @@ internal static class PerformanceRegression
 
         var state = new AppState { CloseHotkey = "", CharactersPerLine = 20 };
         var reader = new MainWindow(state);
+        Field<DispatcherTimer>(reader, "_saveTimer").Interval = TimeSpan.FromDays(1);
         var path = Path.Combine(Path.GetTempPath(), $"FloatingTxtReader-regression-{Guid.NewGuid():N}.txt");
         try
         {
             const string content = "第一卷 第一话 标题\r\n甲乙丙丁戊己庚辛壬癸\r\n\r\n第二卷 第一话：继续\n正文";
             File.WriteAllText(path, content);
             state.FilePath = path;
-            Call(reader, "LoadFile", path);
+            BlankLineRegression.Load(reader, path, false);
             state.CurrentLine = 1;
             var lines = Field<List<string>>(reader, "_lines");
             var chapters = Field<List<(int Line, string Title)>>(reader, "_chapters");
