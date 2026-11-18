@@ -8,6 +8,7 @@ public static class SettingsStore
     private static readonly string DirectoryPath = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "FloatingTxtReader");
     private static readonly string FilePath = Path.Combine(DirectoryPath, "settings.json");
+    internal static SettingsWriter Writer { get; } = new(json => WriteSnapshot(FilePath, json));
 
     public static AppState Load()
     {
@@ -21,12 +22,15 @@ public static class SettingsStore
         }
     }
 
-    public static void Save(AppState state)
+    public static Task SaveAsync(AppState state) => Writer.SaveAsync(state);
+
+    public static void Save(AppState state) => SaveAsync(state).GetAwaiter().GetResult();
+
+    internal static void WriteSnapshot(string filePath, string json)
     {
-        Directory.CreateDirectory(DirectoryPath);
-        var temporaryPath = FilePath + ".tmp";
-        var json = JsonSerializer.Serialize(state, new JsonSerializerOptions { WriteIndented = true });
+        Directory.CreateDirectory(Path.GetDirectoryName(filePath)!);
+        var temporaryPath = filePath + ".tmp";
         File.WriteAllText(temporaryPath, json);
-        File.Move(temporaryPath, FilePath, true);
+        File.Move(temporaryPath, filePath, true);
     }
 }

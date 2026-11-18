@@ -24,6 +24,7 @@ public partial class MainWindow : Window
         @"^\s*(?:(?:\u7B2C\s*)?(?:[0-9\uFF10-\uFF19]+|[\u96F6\u3007\u4E00\u4E8C\u4E09\u56DB\u4E94\u516D\u4E03\u516B\u4E5D\u5341\u767E\u5343\u4E07\u4EBF\u4E24]+)\s*\u5377\s*)?(?:\u7B2C\s*)?(?:[0-9\uFF10-\uFF19]+|[\u96F6\u3007\u4E00\u4E8C\u4E09\u56DB\u4E94\u516D\u4E03\u516B\u4E5D\u5341\u767E\u5343\u4E07\u4EBF\u4E24]+)\s*(?:\u7AE0|\u8BDD)(?=\s|$|[\uFF1A:\u3001.\uFF0E])",
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
     private readonly AppState _state;
+    private readonly SettingsWriter _settingsWriter;
     private readonly DispatcherTimer _saveTimer;
     private readonly DispatcherTimer _scrollTimer;
     private readonly Forms.NotifyIcon _trayIcon;
@@ -46,9 +47,12 @@ public partial class MainWindow : Window
     private uint _fastForwardModifiers;
     private uint _fastForwardKey;
 
-    public MainWindow(AppState state)
+    public MainWindow(AppState state) : this(state, SettingsStore.Writer) { }
+
+    internal MainWindow(AppState state, SettingsWriter settingsWriter)
     {
         _state = state;
+        _settingsWriter = settingsWriter;
         _state.VisibleLines = Math.Clamp(_state.VisibleLines, 1, 30);
         _state.CharactersPerLine = Math.Clamp(_state.CharactersPerLine, 1, 500);
         _state.FastForwardLinesPerSecond = Math.Clamp(_state.FastForwardLinesPerSecond, 1, AppState.MaxFastForwardLinesPerSecond);
@@ -67,12 +71,8 @@ public partial class MainWindow : Window
         Width = state.WindowWidth;
         Height = state.WindowHeight;
         _saveTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(700) };
-        _saveTimer.Tick += (_, _) =>
-        {
-            _saveTimer.Stop();
-            SettingsStore.Save(_state);
-        };
-        _scrollTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(16) };
+        _saveTimer.Tick += SavePendingState;
+        _scrollTimer = new DispatcherTimer(DispatcherPriority.Input) { Interval = TimeSpan.FromMilliseconds(15) };
         _scrollTimer.Tick += (_, _) => FlushPendingScroll();
         _fastForwardTimer = new DispatcherTimer(DispatcherPriority.Input) { Interval = TimeSpan.FromMilliseconds(16) };
         _fastForwardTimer.Tick += (_, _) => FastForwardTick(IsFastForwardKeyHeld());
@@ -196,6 +196,9 @@ public partial class MainWindow : Window
 
     private void LoadFile(string filePath)
     {
+        FlushPendingScroll();
+        _scrollTimer.Stop();
+        _wheelRemainder = 0;
         try
         {
             var content = ReadTextFile(filePath);
@@ -408,6 +411,8 @@ public partial class MainWindow : Window
 
     private void ToggleLock()
     {
+        FlushPendingScroll();
+        _wheelRemainder = 0;
         _state.IsLocked = !_state.IsLocked;
         Opacity = 1;
         SetReaderVisible(!_state.IsLocked || IsMouseOver);
@@ -729,13 +734,14 @@ public partial class MainWindow : Window
             return;
         }
 
+        if (e.Delta != 0 && Math.Sign(_wheelRemainder) != Math.Sign(e.Delta)) _wheelRemainder = 0;
         _wheelRemainder += e.Delta;
         var lineDelta = _wheelRemainder / WheelDeltaPerLine;
         if (lineDelta != 0)
         {
             _wheelRemainder %= WheelDeltaPerLine;
             _pendingScrollLines -= lineDelta;
-            _scrollTimer.Start();
+            if (!_scrollTimer.IsEnabled) FlushPendingScroll();
         }
 
         e.Handled = true;
@@ -744,7 +750,7 @@ public partial class MainWindow : Window
     private void FlushPendingScroll()
     {
         _scrollTimer.Stop();
-        if (!_state.IsLocked || !IsMouseOver || _pendingScrollLines == 0 || _lines.Count == 0)
+        if (!_state.IsLocked || _pendingScrollLines == 0 || _lines.Count == 0)
         {
             _pendingScrollLines = 0;
             return;
@@ -761,6 +767,7 @@ public partial class MainWindow : Window
         _state.CurrentLine = nextLine;
         RenderLines();
         SaveState();
+        _scrollTimer.Start();
     }
 
     private void Window_MouseEnter(object sender, System.Windows.Input.MouseEventArgs e)
@@ -781,8 +788,7 @@ public partial class MainWindow : Window
     private void Window_MouseLeave(object sender, System.Windows.Input.MouseEventArgs e)
     {
         _wheelRemainder = 0;
-        _pendingScrollLines = 0;
-        _scrollTimer.Stop();
+        FlushPendingScroll();
         if (_state.IsLocked)
         {
             SetReaderVisible(false);
@@ -823,15 +829,37 @@ public partial class MainWindow : Window
 
     private void ExitApplication()
     {
-        _isExiting = true;
+        FlushPendingScroll();
+        _scrollTimer.Stop();
         _saveTimer.Stop();
-        SettingsStore.Save(_state);
         StopFastForward();
+        try
+        {
+            // Only explicit exit waits for disk; normal navigation saves in the background.
+            _settingsWriter.SaveAsync(_state).GetAwaiter().GetResult();
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            System.Windows.MessageBox.Show(this, $"无法保存阅读进度，应用尚未退出，请稍后重试。\n{ex.Message}",
+                "保存失败", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+        _isExiting = true;
         UnregisterHotkeys();
         _trayMenu.Close();
         _trayIcon.Visible = false;
         _trayIcon.Dispose();
         System.Windows.Application.Current.Shutdown();
+    }
+
+    private async void SavePendingState(object? sender, EventArgs e)
+    {
+        _saveTimer.Stop();
+        try { await _settingsWriter.SaveAsync(_state); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            Debug.WriteLine($"Unable to save reader settings: {ex.Message}");
+        }
     }
 
     private void SaveState()

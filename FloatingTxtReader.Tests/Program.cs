@@ -26,6 +26,11 @@ internal static class Program
             return;
         }
         var application = new Application { ShutdownMode = ShutdownMode.OnExplicitShutdown };
+        if (args.Length == 2 && args[0] == "--save-exit-probe")
+        {
+            SettingsWriterRegression.ExitProbe(args[1]);
+            return;
+        }
         if (args.Length == 2 && args[0] == "--render-blank-line-preview")
         {
             BlankLineRegression.RenderPreview(args[1]);
@@ -301,6 +306,8 @@ internal static class Program
             Check(Call(reader, "ApplyHotkeys", configured) is string && Field<uint>(reader, "_fastForwardKey") == 0,
                 "Invalid shortcut update does not populate fast-forward cache");
             Field<DispatcherTimer>(reader, "_saveTimer").Stop();
+            WheelRegression.Run(Check);
+            SettingsWriterRegression.Run(Check);
             BlankLineRegression.Run(Check);
             PerformanceRegression.Run(Check);
             SettingsAppearanceRegression.Run(Check);
